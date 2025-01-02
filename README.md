@@ -33,7 +33,7 @@ project_directory/
     ├── media/
     ├── manage.py
     ├── README.md
-	└── requirements.txt
+    └── requirements.txt
 ```
 
 Будет необходимо указать Python интерпретатор, названиe домена и название проекта. Для установки запустите:
