@@ -1,0 +1,17 @@
+env/
+log/
+.idea/
+**/node_modules/
+**/.DS_Store
+**/__pycache__
+*.aux
+*.log
+*.pickle
+*.db
+*.rdb
+*.pid
+*.toc
+*.out
+*.pickle
+celerybeat-schedule                                                                     
+.ipynb_checkpoints
