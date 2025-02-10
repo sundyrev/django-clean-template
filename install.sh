@@ -50,13 +50,16 @@ sudo chmod 664 $project_path/log/{nginx.log,nginx_error.log,gunicorn.log,django.
 
 # Configure environment variables
 echo "[INFO] Configuring environment variables..."
-env_file=$project_path/conf/env_vars/deploy.env
+env_file=$project_path/conf/env_vars/local.env
 touch $env_file
+echo "DEBUG=True" >> $env_file
+echo "#SECRET_KEY=Add_secret_key_here" >> $env_file
 echo "DB_NAME=${project_name}_db" >> $env_file
 echo "DB_USER=${project_name}_user" >> $env_file
 echo "DB_PASSWORD=${project_name}_password" >> $env_file
 echo "DB_HOST=localhost" >> $env_file
 echo "DB_PORT=5432" >> $env_file
+touch $project_path/$project_name/.docker.env
 
 # Set up Python virtual environment
 echo "[INFO] Setting up Python virtual environment..."
@@ -105,7 +108,13 @@ echo "[INFO] Updating Django settings..."
 settings_file=config/settings.py
 
 # Update import section
-sed -i "1,/from pathlib import Path/c\import os\nfrom pathlib import Path" $settings_file
+sed -i "1,/from pathlib import Path/c\import os\nimport environ\nfrom pathlib import Path" $settings_file
+
+# Update BASE_DIR definition
+sed -i "s|BASE_DIR = Path(__file__).resolve().parent.parent|BASE_DIR = Path(__file__).resolve().parent.parent.parent\n\nenv = environ.Env()\nenv.read_env(env_file=BASE_DIR / 'conf/env_vars/local.env')|" $settings_file
+
+# Update DEBUG setting
+sed -i "s/DEBUG = True/DEBUG = env.bool('DEBUG', default=False)/" $settings_file
 
 # Update ALLOWED_HOSTS
 sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['$project_domain']/" $settings_file
@@ -159,11 +168,11 @@ cat > config/settings_database.py << 'EOF'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '5432'),
+        'NAME': env('DB_NAME'),
+        'USER': env('DB_USER'),
+        'PASSWORD': env('DB_PASSWORD'),
+        'HOST': env('DB_HOST',  default='localhost'),
+        'PORT': env('DB_PORT',  default='5432'),
         'AUTOCOMMIT': True,
     }
 }
@@ -195,7 +204,7 @@ LOGGING = {
         'file': {
             'level': 'DEBUG',
             'class': 'logging.FileHandler',
-            'filename': BASE_DIR.parent / 'log/django.log',
+            'filename': BASE_DIR / 'log/django.log',
         },
     },
     'loggers': {
@@ -242,7 +251,7 @@ After=network.target
 User=$USER
 Group=www-data
 WorkingDirectory=$project_path/$project_name
-EnvironmentFile=$project_path/conf/env_vars/deploy.env
+EnvironmentFile=$project_path/conf/env_vars/local.env
 ExecStart=$project_path/env/bin/gunicorn \
     --access-logfile $project_path/log/gunicorn.log \
     --error-logfile $project_path/log/gunicorn.log \
