@@ -13,9 +13,9 @@ project_path=$(pwd)
 project_name=""
 
 # Prompt for user input
-read -p "Python interpreter (default: $default_python_interpreter): " base_python_interpreter
-read -p "Your domain without protocol (e.g., example.com): " project_domain
-read -p "Project name: " project_name
+read -e -p "Python interpreter (default: $default_python_interpreter): " base_python_interpreter
+read -e -p "Your domain without protocol (e.g., example.com): " project_domain
+read -e -p "Project name: " project_name
 
 # Set defaults if not provided
 base_python_interpreter=${base_python_interpreter:-$default_python_interpreter}
@@ -52,11 +52,11 @@ sudo chmod 664 $project_path/log/{nginx.log,nginx_error.log,gunicorn.log,django.
 echo "[INFO] Configuring environment variables..."
 env_file=$project_path/conf/env_vars/deploy.env
 touch $env_file
-echo "export DB_NAME=${project_name}_db" >> $env_file
-echo "export DB_USER=${project_name}_user" >> $env_file
-echo "export DB_PASSWORD=${project_name}_password" >> $env_file
-echo "export DB_HOST=localhost" >> $env_file
-echo "export DB_PORT=5432" >> $env_file
+echo "DB_NAME=${project_name}_db" >> $env_file
+echo "DB_USER=${project_name}_user" >> $env_file
+echo "DB_PASSWORD=${project_name}_password" >> $env_file
+echo "DB_HOST=localhost" >> $env_file
+echo "DB_PORT=5432" >> $env_file
 
 # Set up Python virtual environment
 echo "[INFO] Setting up Python virtual environment..."
@@ -70,24 +70,143 @@ pip install -r requirements.txt
 
 # Install Django and Gunicorn
 echo "[INFO] Installing Django and Gunicorn in the virtual environment..."
-pip install django gunicorn
+pip install django gunicorn jinja2 psycopg2-binary
 
 # Create Django project
 echo "[INFO] Creating Django project..."
 django-admin startproject config $project_name
 cd $project_name
-mkdir -p apps templates media jinja2
-touch templates/base.html
-touch jinja2/j2.login.html
+mkdir -p apps media
 
 echo "[INFO] Setting up applications directory..."
 touch apps/__init__.py
 
+# Create Jinja2 environment configuration
+echo "[INFO] Creating Jinja2 environment configuration..."
+mkdir -p config
+cat <<EOF > config/jinja2.py
+from django.templatetags.static import static
+from django.urls import reverse
+
+from jinja2 import Environment
+
+
+def environment(**options):
+    env = Environment(**options)
+    env.globals.update({
+        'static': static,
+        'url': reverse,
+    })
+    return env
+EOF
+
 # Update settings.py
 echo "[INFO] Updating Django settings..."
 settings_file=config/settings.py
-sed -i "s/ALLOWED_HOSTS = .*/ALLOWED_HOSTS = ['$project_domain']/" $settings_file
-sed -i "s|STATIC_URL = 'static/'|STATIC_URL = '/static/'\nSTATIC_ROOT = BASE_DIR / 'static/'|" $settings_file
+
+# Update import section
+sed -i "1,/from pathlib import Path/c\import os\nfrom pathlib import Path" $settings_file
+
+# Update ALLOWED_HOSTS
+sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['$project_domain']/" $settings_file
+
+# Update STATIC_URL and add STATIC_ROOT
+if ! grep -q "STATIC_ROOT" $settings_file; then
+    echo "STATIC_ROOT = BASE_DIR / 'static/'" >> $settings_file
+fi
+
+# Update TEMPLATES configuration
+cat > config/settings_templates.py << 'EOF'
+TEMPLATES = [
+    {
+        'BACKEND': 'django.template.backends.jinja2.Jinja2',
+        'DIRS': [BASE_DIR / 'jinja2'],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'environment': 'config.jinja2.environment',
+        },
+    },
+    {
+        'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        'DIRS': [],
+        'APP_DIRS': True,
+        'OPTIONS': {
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+            ],
+        },
+    },
+]
+EOF
+
+# Replace TEMPLATES section
+awk '
+/^TEMPLATES = \[/,/^\]/ {
+    if (!templates_found) {
+        system("cat config/settings_templates.py")
+        templates_found=1
+    }
+    next
+}
+{ print }
+' $settings_file > temp_settings && mv temp_settings $settings_file
+
+# Update database configuration
+cat > config/settings_database.py << 'EOF'
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'NAME': os.getenv('DB_NAME'),
+        'USER': os.getenv('DB_USER'),
+        'PASSWORD': os.getenv('DB_PASSWORD'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
+        'AUTOCOMMIT': True,
+    }
+}
+EOF
+
+# Replace DATABASES section
+awk '
+/^DATABASES = {/,/^}/ {
+    if (!database_found) {
+        system("cat config/settings_database.py")
+        database_found=1
+    }
+    next
+}
+{ print }
+' $settings_file > temp_settings && mv temp_settings $settings_file
+
+# Clean up temporary files
+rm -f config/settings_templates.py config/settings_database.py
+
+# Add logging configuration
+cat >> $settings_file << 'EOF'
+
+# Logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'DEBUG',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR.parent / 'log/django.log',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+}
+EOF
 
 # Collect static files
 echo "[INFO] Collecting static files..."
@@ -101,7 +220,7 @@ pip freeze > requirements.txt
 echo "[INFO] Setting up Gunicorn configuration..."
 gunicorn_socket=$project_path/conf/gunicorn/$project_name.gunicorn.socket
 gunicorn_service=$project_path/conf/gunicorn/$project_name.gunicorn.service
-touch $gunicorn_socket
+
 cat <<EOF > $gunicorn_socket
 [Unit]
 Description=gunicorn socket
@@ -113,7 +232,6 @@ ListenStream=/run/$project_name.gunicorn.sock
 WantedBy=sockets.target
 EOF
 
-touch $gunicorn_service
 cat <<EOF > $gunicorn_service
 [Unit]
 Description=gunicorn daemon
@@ -124,12 +242,14 @@ After=network.target
 User=$USER
 Group=www-data
 WorkingDirectory=$project_path/$project_name
+EnvironmentFile=$project_path/conf/env_vars/deploy.env
 ExecStart=$project_path/env/bin/gunicorn \
-          --access-logfile $project_path/log/gunicorn.log \
-          --error-logfile $project_path/log/gunicorn.log \
-          --capture-output \
-          --workers 3 \
-          --bind unix:/run/$project_name.gunicorn.sock config.wsgi:application
+    --access-logfile $project_path/log/gunicorn.log \
+    --error-logfile $project_path/log/gunicorn.log \
+    --capture-output \
+    --workers 3 \
+    --bind unix:/run/$project_name.gunicorn.sock \
+    config.wsgi:application
 
 [Install]
 WantedBy=multi-user.target
@@ -147,7 +267,7 @@ sudo systemctl enable $project_name.gunicorn.socket
 # Configure Nginx
 echo "[INFO] Setting up Nginx configuration..."
 nginx_conf=$project_path/conf/nginx/$project_name.nginx.conf
-touch $nginx_conf
+
 cat <<EOF > $nginx_conf
 server {
     listen 80;

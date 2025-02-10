@@ -2,6 +2,9 @@
 
 read -p "Project name: " project_name
 read -p "Project path: " project_path
+project_path="${project_path/#\~/$HOME}"
+project_path=$(realpath -m "$project_path")
+
 if [[ -z "$project_path" ]]; then
     echo "Error: Project path is required."
     exit 1
