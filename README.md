@@ -11,7 +11,8 @@ project_directory/
 │   │   ├── project_name.gunicorn.socket
 │   │   └── project_name.gunicorn.service
 │   └── env_vars/
-│		└── deploy.env
+│		├── local.env
+│		└── production.env
 ├── env/
 ├── log/
 │   ├── gunicorn.log
@@ -33,7 +34,10 @@ project_directory/
     ├── media/
     ├── manage.py
     ├── README.md
-    └── requirements.txt
+	└── requirements/
+		├── base.txt
+		├── local.txt
+		└── production.txt
 ```
 
 Будет необходимо указать Python интерпретатор, названиe домена и название проекта. Для установки запустите:
@@ -42,7 +46,15 @@ project_directory/
 ./install.sh
 ```
 
-В конфиге Django заполните настройки базы данных (`/config/settings.py`).
+В файле с переменными окружения (`/conf/env_vars`) заполните настройки подключения к базе данных.
+
+Проект использует `pip-tools` для управления зависимостями. При необходимости добавить новую зависимость:
+
+```zsh
+echo "new-package>=1.0.0" >> requirements/local.in
+pip-compile requirements/local.in
+pip-sync requirements/local.txt
+```
 
 Посмотреть статус службы gunicorn:
 

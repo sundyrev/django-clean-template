@@ -2,91 +2,257 @@
 
 # Check if pyenv is installed
 if ! command -v pyenv &> /dev/null; then
-    echo "pyenv is not installed. Please install it before proceeding."
+    echo -e "\e[31m[ERROR]\e[0m pyenv is not installed. Please install it before proceeding."
     exit 1
 fi
 
 # Variables
 default_python_interpreter=$(which python3)
 project_domain=""
-project_path=$(pwd)
+project_path=$(dirname "$(realpath "$0")")
 project_name=""
+environment=""
+
+# Function to validate environment input
+validate_environment() {
+    local env=$1
+    env=$(echo "$env" | tr '[:upper:]' '[:lower:]')
+
+    # Проверка допустимых значений
+    if [[ "$env" != "dev" && "$env" != "development" && "$env" != "production" ]]; then
+        echo "Invalid environment. Please choose 'development' or 'production'"
+        return 1
+    fi
+
+    # Нормализация значения (упрощённая логика)
+    if [[ "$env" == "dev" || "$env" == "development" ]]; then
+        echo "local"
+    else
+        echo "production"
+    fi
+
+    return 0
+}
 
 # Prompt for user input
-read -e -p "Python interpreter (default: $default_python_interpreter): " base_python_interpreter
+read -e -p "Python interpreter (default: ${default_python_interpreter}): " base_python_interpreter
 read -e -p "Your domain without protocol (e.g., example.com): " project_domain
 read -e -p "Project name: " project_name
 
+# Environment selection with validation
+while true; do
+    read -e -p $'Select environment (Development \e[36m[dev]\e[0m/Production): ' environment
+    normalized_environment=$(validate_environment "$environment")
+    if [[ $? -eq 0 ]]; then
+        environment="$normalized_environment"
+        break
+    fi
+done
+
 # Set defaults if not provided
-base_python_interpreter=${base_python_interpreter:-$default_python_interpreter}
+base_python_interpreter=${base_python_interpreter:-${default_python_interpreter}}
 
 # Install necessary packages
-echo "[INFO] Installing necessary packages..."
+echo -e "\e[32m[INFO]\e[0m Installing necessary packages..."
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3-pip python3-dev libpq-dev postgresql postgresql-contrib nginx curl
 
 # Create the directory structure
-echo "[INFO] Creating project directory structure..."
-mkdir -p $project_path/conf/{nginx,gunicorn,env_vars}
-touch $project_path/conf/nginx/$project_name.nginx.conf
-touch $project_path/conf/gunicorn/{$project_name.gunicorn.socket,$project_name.gunicorn.service}
-mkdir -p $project_path/$project_name/{apps,templates,media,jinja2}
-mkdir -p $project_path/log
-touch $project_path/log/{django.log,gunicorn.log,nginx.log,nginx_error.log}
+echo -e "\e[32m[INFO]\e[0m Creating project directory structure..."
+mkdir -m 755 -p "${project_path}/conf/"{nginx,gunicorn,env_vars}
+install -m 644 /dev/null "${project_path}/conf/nginx/${project_name}.nginx.conf"
+install -m 644 /dev/null "${project_path}/conf/gunicorn/${project_name}.gunicorn.socket"
+install -m 644 /dev/null "${project_path}/conf/gunicorn/${project_name}.gunicorn.service"
+mkdir -m 755 -p "${project_path}/${project_name}/"{apps,templates,media,jinja2}
+mkdir -m 755 -p "${project_path}/log"
+mkdir -m 755 -p "${project_path}/${project_name}/requirements"
 
-echo "[INFO] Setting permissions for Gunicorn configuration files..."
-sudo chmod 644 $project_path/conf/gunicorn/$project_name.gunicorn.{service,socket}
+# Create requirements directory and base files
+echo -e "\e[32m[INFO]\e[0m Creating requirements files..."
+cat > "${project_path}/${project_name}/requirements/base.in" << EOL
+# Main framework
+Django>=5.0,<5.1
 
-# Set permissions for log directory
-echo "[INFO] Setting permissions for log directory..."
-sudo chown $USER:www-data $project_path/log 
-sudo chmod 775 $project_path/log
+# PostgreSQL driver
+psycopg2-binary>=2.9.0
 
-# Set permissions for log files
-echo "[INFO] Setting permissions for log files..."
-sudo chown www-data:www-data $project_path/log/{nginx.log,nginx_error.log}
-sudo chown $USER:www-data $project_path/log/{gunicorn.log,django.log}
-sudo chmod 664 $project_path/log/{nginx.log,nginx_error.log,gunicorn.log,django.log}
+# Environment variables management
+django-environ>=0.11.2
+
+# Templating
+Jinja2>=3.1.0
+
+# WSGI server
+gunicorn>=20.1.0
+EOL
+
+cat > "${project_path}/${project_name}/requirements/local.in" << EOL
+-r base.in
+
+# Development tools
+ipython>=8.0.0
+django-debug-toolbar>=4.0.0
+django-extensions>=3.2.0
+
+# Code quality
+flake8>=6.0.0
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-django>=4.5.0
+pytest-cov>=4.0.0
+factory_boy>=3.2.0
+Faker>=18.0.0
+EOL
+
+cat > "${project_path}/${project_name}/requirements/production.in" << EOL
+-r base.in
+
+# Security
+django-security>=0.12.0
+django-axes>=6.0.0
+
+# Monitoring
+sentry-sdk>=1.0.0
+
+# Caching
+django-redis>=5.2.0
+
+# Performance
+django-storages>=1.13.0
+whitenoise>=6.4.0
+EOL
+
+# Create log files with proper permissions
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx.log"
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx_error.log"
+sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/gunicorn.log"
+sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/django.log"
+
+# Create Docker files
+# install -m 664 /dev/null "${project_path}/docker-compose.yml"
+# mkdir -m 755 -p "${project_path}/docker"
+# install -m 664 /dev/null "${project_path}/docker/Dockerfile.dev"
+# install -m 664 /dev/null "${project_path}/docker/Dockerfile.prod"
 
 # Configure environment variables
-echo "[INFO] Configuring environment variables..."
-env_file=$project_path/conf/env_vars/local.env
-touch $env_file
-echo "DEBUG=True" >> $env_file
-echo "#SECRET_KEY=Add_secret_key_here" >> $env_file
-echo "DB_NAME=${project_name}_db" >> $env_file
-echo "DB_USER=${project_name}_user" >> $env_file
-echo "DB_PASSWORD=${project_name}_password" >> $env_file
-echo "DB_HOST=localhost" >> $env_file
-echo "DB_PORT=5432" >> $env_file
-touch $project_path/$project_name/.docker.env
+echo -e "\e[32m[INFO]\e[0m Configuring environment variables..."
+
+# Create local environment file with proper permissions
+install -m 644 /dev/null "${project_path}/conf/env_vars/local.env"
+cat > "${project_path}/conf/env_vars/local.env" << EOL
+DEBUG=True
+#SECRET_KEY=insert-your-secret-key-here
+ALLOWED_HOSTS=${project_domain},localhost,127.0.0.1
+POSTGRES_DB=${project_name}_db
+POSTGRES_USER=${project_name}_user
+POSTGRES_PASSWORD=${project_name}_password
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+EOL
+
+ # Create production environment file with proper permissions
+install -m 644 /dev/null "${project_path}/conf/env_vars/production.env"
+cat > "${project_path}/conf/env_vars/production.env" << EOL
+DEBUG=False
+#SECRET_KEY=insert-your-secret-key-here
+ALLOWED_HOSTS=${project_domain}
+POSTGRES_DB=${project_name}_db
+POSTGRES_USER=${project_name}_user
+POSTGRES_PASSWORD=${project_name}_password
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+EOL
+
+# Create .gitignore file
+install -m 644 /dev/null "${project_path}/.gitignore"
+cat > "${project_path}/.gitignore" << EOL
+# Ignore files and directories related to Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.egg-info/
+*.egg
+dist/
+build/
+.cache/
+.pytest_cache/
+.coverage
+.idea/
+.vscode/
+.DS_Store
+
+# Ignore files and directories related to Django
+/media/
+/static/
+/log/
+/env/
+.env
+local.env
+production.env
+
+# Ignore files related to Docker
+docker-compose.override.yml
+docker-compose.prod.yml
+docker-compose.dev.yml
+
+# Ignore files related to IDE
+.idea/
+.vscode/
+
+# Ignore files related to the operating system
+.DS_Store
+Thumbs.db
+
+# Ignore compiled requirements
+requirements/*.txt
+!requirements/base.txt
+!requirements/local.txt
+!requirements/production.txt
+EOL
 
 # Set up Python virtual environment
-echo "[INFO] Setting up Python virtual environment..."
-cd $project_path
-$base_python_interpreter -m venv env
+echo -e "\e[32m[INFO]\e[0m Setting up Python virtual environment..."
+cd "${project_path}"
+${base_python_interpreter} -m venv env
 source env/bin/activate
 
-# Upgrade pip to the latest version and install all dependencies
+# Upgrade pip and install pip-tools
+echo -e "\e[32m[INFO]\e[0m Upgrading pip and installing pip-tools..."
 pip install --upgrade pip
-pip install -r requirements.txt
+pip install pip-tools
 
-# Install Django and Gunicorn
-echo "[INFO] Installing Django and Gunicorn in the virtual environment..."
-pip install django gunicorn jinja2 psycopg2-binary
+# Compile requirements files
+echo -e "\e[32m[INFO]\e[0m Compiling requirements files..."
+pip-compile ${project_name}/requirements/base.in --no-strip-extras --output-file ${project_name}/requirements/base.txt
+pip-compile ${project_name}/requirements/local.in --no-strip-extras --output-file ${project_name}/requirements/local.txt
+pip-compile ${project_name}/requirements/production.in --no-strip-extras --output-file ${project_name}/requirements/production.txt
+
+# Install dependencies based on environment
+echo -e "\e[32m[INFO]\e[0m Installing ${environment} dependencies..."
+pip-sync ${project_name}/requirements/${environment}.txt
 
 # Create Django project
-echo "[INFO] Creating Django project..."
-django-admin startproject config $project_name
-cd $project_name
-mkdir -p apps media
+echo -e "\e[32m[INFO]\e[0m Creating Django project..."
+django-admin startproject config "${project_name}"
+cd "${project_name}"
+mkdir -m 755 -p apps media
 
-echo "[INFO] Setting up applications directory..."
+echo -e "\e[32m[INFO]\e[0m Setting up applications directory..."
 touch apps/__init__.py
 
 # Create Jinja2 environment configuration
-echo "[INFO] Creating Jinja2 environment configuration..."
-mkdir -p config
+echo -e "\e[32m[INFO]\e[0m Creating Jinja2 environment configuration..."
+mkdir -m 755 -p config
 cat <<EOF > config/jinja2.py
 from django.templatetags.static import static
 from django.urls import reverse
@@ -103,28 +269,29 @@ def environment(**options):
     return env
 EOF
 
-# Update settings.py
-echo "[INFO] Updating Django settings..."
-settings_file=config/settings.py
+# Update settings/base.py
+echo -e "\e[32m[INFO]\e[0m Updating Django settings..."
+settings_path=config/settings.py
 
 # Update import section
-sed -i "1,/from pathlib import Path/c\import os\nimport environ\nfrom pathlib import Path" $settings_file
+sed -i "1,/from pathlib import Path/c\import environ\nfrom pathlib import Path" "${settings_path}"
 
 # Update BASE_DIR definition
-sed -i "s|BASE_DIR = Path(__file__).resolve().parent.parent|BASE_DIR = Path(__file__).resolve().parent.parent.parent\n\nenv = environ.Env()\nenv.read_env(env_file=BASE_DIR / 'conf/env_vars/local.env')|" $settings_file
+sed -i "s|BASE_DIR = Path(__file__).resolve().parent.parent|BASE_DIR = Path(__file__).resolve().parent.parent.parent\n\nenv = environ.Env()\nenv.read_env(env_file=BASE_DIR / 'conf/env_vars/${environment}.env')|" "${settings_path}"
+
+# Add environment-based SECRET_KEY setting
+sed -i "/SECRET_KEY =/a # SECRET_KEY= env('SECRET_KEY')" "${settings_path}"
 
 # Update DEBUG setting
-sed -i "s/DEBUG = True/DEBUG = env.bool('DEBUG', default=False)/" $settings_file
+sed -i "s/DEBUG = True/DEBUG = env.bool('DEBUG', default=False)/" "${settings_path}"
 
-# Update ALLOWED_HOSTS
-sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = ['$project_domain']/" $settings_file
+# Update ALLOWED_HOSTS setting
+sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=\['localhost', '127.0.0.1'\])/" "${settings_path}"
 
-# Update STATIC_URL and add STATIC_ROOT
-if ! grep -q "STATIC_ROOT" $settings_file; then
-    echo "STATIC_ROOT = BASE_DIR / 'static/'" >> $settings_file
-fi
+# Update STATIC_URL and STATIC_ROOT setting
+sed -i "/STATIC_URL = ['\"]static\/['\"]/c\STATIC_URL = 'static\/'\nSTATIC_ROOT = BASE_DIR / 'static'" "${settings_path}"
 
-# Update TEMPLATES configuration
+# Update TEMPLATES setting
 cat > config/settings_templates.py << 'EOF'
 TEMPLATES = [
     {
@@ -151,51 +318,43 @@ TEMPLATES = [
 ]
 EOF
 
-# Replace TEMPLATES section
-awk '
-/^TEMPLATES = \[/,/^\]/ {
-    if (!templates_found) {
-        system("cat config/settings_templates.py")
-        templates_found=1
-    }
-    next
+sed -i '
+/^TEMPLATES = \[/,/^]/{
+/^TEMPLATES = \[/r config/settings_templates.py
+d
 }
-{ print }
-' $settings_file > temp_settings && mv temp_settings $settings_file
+' "${settings_path}"
 
-# Update database configuration
+rm -f config/settings_templates.py
+
+# Update DATABASES setting
 cat > config/settings_database.py << 'EOF'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': env('DB_NAME'),
-        'USER': env('DB_USER'),
-        'PASSWORD': env('DB_PASSWORD'),
-        'HOST': env('DB_HOST',  default='localhost'),
-        'PORT': env('DB_PORT',  default='5432'),
+        'NAME': env('POSTGRES_DB'),
+        'USER': env('POSTGRES_USER'),
+        'PASSWORD': env('POSTGRES_PASSWORD'),
+        'HOST': env('POSTGRES_HOST',  default='localhost'),
+        'PORT': env('POSTGRES_PORT',  default='5432'),
         'AUTOCOMMIT': True,
     }
 }
 EOF
 
-# Replace DATABASES section
-awk '
-/^DATABASES = {/,/^}/ {
-    if (!database_found) {
-        system("cat config/settings_database.py")
-        database_found=1
-    }
-    next
+sed -i '
+/^DATABASES = {/,/^}/{
+/^DATABASES = {/r config/settings_database.py
+d
 }
-{ print }
-' $settings_file > temp_settings && mv temp_settings $settings_file
+' "${settings_path}"
 
-# Clean up temporary files
-rm -f config/settings_templates.py config/settings_database.py
+rm -f config/settings_database.py
 
+
+echo "" >> "${settings_path}"
 # Add logging configuration
-cat >> $settings_file << 'EOF'
-
+cat >> "${settings_path}" << 'EOF'
 # Logging
 LOGGING = {
     'version': 1,
@@ -218,72 +377,68 @@ LOGGING = {
 EOF
 
 # Collect static files
-echo "[INFO] Collecting static files..."
+echo -e "\e[32m[INFO]\e[0m Collecting static files..."
 python manage.py collectstatic --noinput
 
-# Generate requirements.txt
-echo "[INFO] Generating requirements.txt..."
-pip freeze > requirements.txt
-
 # Configure Gunicorn
-echo "[INFO] Setting up Gunicorn configuration..."
-gunicorn_socket=$project_path/conf/gunicorn/$project_name.gunicorn.socket
-gunicorn_service=$project_path/conf/gunicorn/$project_name.gunicorn.service
+echo -e "\e[32m[INFO]\e[0m Setting up Gunicorn configuration..."
+gunicorn_socket="${project_path}/conf/gunicorn/${project_name}.gunicorn.socket"
+gunicorn_service="${project_path}/conf/gunicorn/${project_name}.gunicorn.service"
 
-cat <<EOF > $gunicorn_socket
+cat <<EOF > "${gunicorn_socket}"
 [Unit]
 Description=gunicorn socket
 
 [Socket]
-ListenStream=/run/$project_name.gunicorn.sock
+ListenStream=/run/${project_name}.gunicorn.sock
 
 [Install]
 WantedBy=sockets.target
 EOF
 
-cat <<EOF > $gunicorn_service
+cat <<EOF > "${gunicorn_service}"
 [Unit]
 Description=gunicorn daemon
-Requires=$project_name.gunicorn.socket
+Requires=${project_name}.gunicorn.socket
 After=network.target
 
 [Service]
-User=$USER
+User=${USER}
 Group=www-data
-WorkingDirectory=$project_path/$project_name
-EnvironmentFile=$project_path/conf/env_vars/local.env
-ExecStart=$project_path/env/bin/gunicorn \
-    --access-logfile $project_path/log/gunicorn.log \
-    --error-logfile $project_path/log/gunicorn.log \
+WorkingDirectory=${project_path}/${project_name}
+EnvironmentFile=${project_path}/conf/env_vars/${environment}.env
+ExecStart=${project_path}/env/bin/gunicorn \
+    --access-logfile ${project_path}/log/gunicorn.log \
+    --error-logfile ${project_path}/log/gunicorn.log \
     --capture-output \
     --workers 3 \
-    --bind unix:/run/$project_name.gunicorn.sock \
+    --bind unix:/run/${project_name}.gunicorn.sock \
     config.wsgi:application
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo ln -s $gunicorn_service /etc/systemd/system/$project_name.gunicorn.service
-sudo ln -s $gunicorn_socket /etc/systemd/system/$project_name.gunicorn.socket
+sudo ln -s "${gunicorn_service}" "/etc/systemd/system/${project_name}.gunicorn.service"
+sudo ln -s "${gunicorn_socket}" "/etc/systemd/system/${project_name}.gunicorn.socket"
 sudo systemctl daemon-reload 
 
-sudo systemctl start $project_name.gunicorn.service
-sudo systemctl enable $project_name.gunicorn.service
-sudo systemctl start $project_name.gunicorn.socket
-sudo systemctl enable $project_name.gunicorn.socket
+sudo systemctl start "${project_name}.gunicorn.service"
+sudo systemctl enable "${project_name}.gunicorn.service"
+sudo systemctl start "${project_name}.gunicorn.socket"
+sudo systemctl enable "${project_name}.gunicorn.socket"
 
 # Configure Nginx
-echo "[INFO] Setting up Nginx configuration..."
-nginx_conf=$project_path/conf/nginx/$project_name.nginx.conf
+echo -e "\e[32m[INFO]\e[0m Setting up Nginx configuration..."
+nginx_conf="${project_path}/conf/nginx/${project_name}.nginx.conf"
 
-cat <<EOF > $nginx_conf
+cat <<EOF > "${nginx_conf}"
 server {
     listen 80;
-    server_name $project_domain;
+    server_name ${project_domain};
 
-    access_log $project_path/log/nginx.log;
-    error_log $project_path/log/nginx_error.log;
+    access_log ${project_path}/log/nginx.log;
+    error_log ${project_path}/log/nginx_error.log;
 
     location = /favicon.ico {
         access_log off;
@@ -291,22 +446,21 @@ server {
     }
 
     location /static/ {
-        root $project_path/$project_name;
+        root ${project_path}/${project_name};
     }
 
     location /media/ {
         autoindex on;
-        alias $project_path/$project_name/media/;
+        alias ${project_path}/${project_name}/media/;
     }
 
     location / {
         include proxy_params;
-        proxy_pass http://unix:/run/$project_name.gunicorn.sock;
+        proxy_pass http://unix:/run/${project_name}.gunicorn.sock;
     }
 }
 EOF
 
-sudo ln -s $nginx_conf /etc/nginx/sites-enabled
+sudo ln -s "${nginx_conf}" /etc/nginx/sites-enabled
 sudo nginx -t && sudo systemctl restart nginx
-
-echo "[INFO] Django project setup completed successfully."
+echo -e "\e[32m[INFO]\e[0m Django project setup completed successfully."
