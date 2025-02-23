@@ -63,9 +63,10 @@ mkdir -m 755 -p "${project_path}/conf/"{nginx,gunicorn,env_vars}
 install -m 644 /dev/null "${project_path}/conf/nginx/${project_name}.nginx.conf"
 install -m 644 /dev/null "${project_path}/conf/gunicorn/${project_name}.gunicorn.socket"
 install -m 644 /dev/null "${project_path}/conf/gunicorn/${project_name}.gunicorn.service"
-mkdir -m 755 -p "${project_path}/${project_name}/"{apps,templates,media,jinja2}
 mkdir -m 755 -p "${project_path}/log"
-mkdir -m 755 -p "${project_path}/${project_name}/requirements"
+mkdir -m 755 -p "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles}
+mkdir -m 755 -p "${project_path}/${project_name}/static/"{css,js,images,admin}
+mkdir -m 755 -p "${project_path}/${project_name}/media/uploads"
 
 # Create requirements directory and base files
 echo -e "\e[32m[INFO]\e[0m Creating requirements files..."
@@ -133,10 +134,10 @@ sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/guni
 sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/django.log"
 
 # Create Docker files
-# install -m 664 /dev/null "${project_path}/docker-compose.yml"
-# mkdir -m 755 -p "${project_path}/docker"
-# install -m 664 /dev/null "${project_path}/docker/Dockerfile.dev"
-# install -m 664 /dev/null "${project_path}/docker/Dockerfile.prod"
+install -m 664 /dev/null "${project_path}/docker-compose.yml"
+mkdir -m 755 -p "${project_path}/docker"
+install -m 664 /dev/null "${project_path}/docker/Dockerfile.django"
+# install -m 664 /dev/null "${project_path}/docker/Dockerfile.nginx"
 
 # Configure environment variables
 echo -e "\e[32m[INFO]\e[0m Configuring environment variables..."
@@ -170,54 +171,214 @@ EOL
 # Create .gitignore file
 install -m 644 /dev/null "${project_path}/.gitignore"
 cat > "${project_path}/.gitignore" << EOL
-# Ignore files and directories related to Python
+# Python
 __pycache__/
 *.py[cod]
-*.sqlite3
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+bin/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+.Python
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual Environment
+.env
+env/
+venv/
+.venv/
+.python-version
+
+# Django
 *.log
 *.pot
 *.pyc
 *.pyo
 *.pyd
+*.sqlite3
 *.db
-*.egg-info/
-*.egg
-dist/
-build/
-.cache/
-.pytest_cache/
+.static_storage/
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Media and Static files
+media/
+staticfiles/
+static/
+!static/.gitkeep
+
+# Docker
+docker-compose*.yml
+.docker/
+docker/
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# Coverage / Testing
 .coverage
-.idea/
-.vscode/
+.tox/
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+htmlcov/
+
+# OS generated files
 .DS_Store
-
-# Ignore files and directories related to Django
-/media/
-/static/
-/log/
-/env/
-.env
-local.env
-production.env
-
-# Ignore files related to Docker
-docker-compose.override.yml
-docker-compose.prod.yml
-docker-compose.dev.yml
-
-# Ignore files related to IDE
-.idea/
-.vscode/
-
-# Ignore files related to the operating system
-.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
 
-# Ignore compiled requirements
+# Requirements
 requirements/*.txt
 !requirements/base.txt
 !requirements/local.txt
 !requirements/production.txt
+
+# Logs
+log/*.log
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Jinja2
+jinja2/*.pyc
+jinja2/__pycache__/
+EOL
+
+# Create .dockerignore file
+install -m 644 /dev/null "${project_path}/.dockerignore"
+cat > "${project_path}/.dockerignore" << EOL
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+bin/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing and Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pytest_cache/
+coverage.xml
+nosetests.xml
+
+# Environment
+.env
+env/
+venv/
+.venv/
+.python-version
+
+# Project specific
+log/*
+media/*
+static/*
+staticfiles/*
+*.sqlite3
+*.db
+db.sqlite3-journal
+
+# Docker
+.docker
+docker-compose*.yml
+Dockerfile*
+!docker/Dockerfile.local
+!docker/Dockerfile.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Node
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Project specific - conf directory
+conf/env_vars/*.env
+
+# Temporary files
+*.swp
+*~
+*.bak
+*.tmp
 EOL
 
 # Set up Python virtual environment
@@ -286,17 +447,32 @@ sed -i "/SECRET_KEY =/a # SECRET_KEY= env('SECRET_KEY')" "${settings_path}"
 sed -i "s/DEBUG = True/DEBUG = env.bool('DEBUG', default=False)/" "${settings_path}"
 
 # Update ALLOWED_HOSTS setting
-sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=\['localhost', '127.0.0.1'\])/" "${settings_path}"
+sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=\['localhost'\])/" "${settings_path}"
 
-# Update STATIC_URL and STATIC_ROOT setting
-sed -i "/STATIC_URL = ['\"]static\/['\"]/c\STATIC_URL = 'static\/'\nSTATIC_ROOT = BASE_DIR / 'static'" "${settings_path}"
+# Update STATIC and MEDIA settings
+cat > config/settings_static.py << EOF
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / '${project_name}/staticfiles'
+STATICFILES_DIRS = [
+    BASE_DIR / '${project_name}/static',
+]
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / '${project_name}/media'
+EOF
+
+sed -i '
+/^STATIC_URL = /r config/settings_static.py
+/^STATIC_URL = /d
+' "${settings_path}"
+rm -f config/settings_static.py
 
 # Update TEMPLATES setting
-cat > config/settings_templates.py << 'EOF'
+cat > config/settings_templates.py << EOF
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.jinja2.Jinja2',
-        'DIRS': [BASE_DIR / 'jinja2'],
+        'DIRS': [BASE_DIR / '${project_name}/jinja2'],
         'APP_DIRS': True,
         'OPTIONS': {
             'environment': 'config.jinja2.environment',
@@ -304,7 +480,7 @@ TEMPLATES = [
     },
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / '${project_name}/templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -324,7 +500,6 @@ sed -i '
 d
 }
 ' "${settings_path}"
-
 rm -f config/settings_templates.py
 
 # Update DATABASES setting
@@ -348,7 +523,6 @@ sed -i '
 d
 }
 ' "${settings_path}"
-
 rm -f config/settings_database.py
 
 
@@ -446,7 +620,7 @@ server {
     }
 
     location /static/ {
-        root ${project_path}/${project_name};
+        alias ${project_path}/${project_name}/staticfiles/;
     }
 
     location /media/ {
