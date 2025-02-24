@@ -147,7 +147,9 @@ install -m 644 /dev/null "${project_path}/conf/env_vars/local.env"
 cat > "${project_path}/conf/env_vars/local.env" << EOL
 DEBUG=True
 #SECRET_KEY=insert-your-secret-key-here
-ALLOWED_HOSTS=${project_domain},localhost,127.0.0.1
+ALLOWED_HOSTS=${project_domain},localhost
+
+# PostgreSQL settings
 POSTGRES_DB=${project_name}_db
 POSTGRES_USER=${project_name}_user
 POSTGRES_PASSWORD=${project_name}_password
@@ -161,11 +163,22 @@ cat > "${project_path}/conf/env_vars/production.env" << EOL
 DEBUG=False
 #SECRET_KEY=insert-your-secret-key-here
 ALLOWED_HOSTS=${project_domain}
+
+# PostgreSQL settings
 POSTGRES_DB=${project_name}_db
 POSTGRES_USER=${project_name}_user
 POSTGRES_PASSWORD=${project_name}_password
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
+
+# Redis settings
+#REDIS_URL
+
+# Email settings
+#EMAIL_HOST
+#EMAIL_PORT
+#EMAIL_HOST_USER
+#EMAIL_HOST_PASSWORD
 EOL
 
 # Create .gitignore file
@@ -458,9 +471,14 @@ STATICFILES_DIRS = [
 ]
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / '${project_name}/media'
 EOF
 
+# Update MEDIA_ROOT setting depending on the environment
+if [ "$environment" = "production" ]; then
+    echo "MEDIA_ROOT = '/var/www/myproject/media/'" >> config/settings_static.py
+else
+    echo "MEDIA_ROOT = BASE_DIR / '${project_name}/media'" >> config/settings_static.py
+fi
 sed -i '
 /^STATIC_URL = /r config/settings_static.py
 /^STATIC_URL = /d
@@ -493,7 +511,6 @@ TEMPLATES = [
     },
 ]
 EOF
-
 sed -i '
 /^TEMPLATES = \[/,/^]/{
 /^TEMPLATES = \[/r config/settings_templates.py
@@ -510,13 +527,12 @@ DATABASES = {
         'NAME': env('POSTGRES_DB'),
         'USER': env('POSTGRES_USER'),
         'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST',  default='localhost'),
-        'PORT': env('POSTGRES_PORT',  default='5432'),
+        'HOST': env('POSTGRES_HOST', default='localhost'),
+        'PORT': env('POSTGRES_PORT', default='5432'),
         'AUTOCOMMIT': True,
     }
 }
 EOF
-
 sed -i '
 /^DATABASES = {/,/^}/{
 /^DATABASES = {/r config/settings_database.py
@@ -525,29 +541,78 @@ d
 ' "${settings_path}"
 rm -f config/settings_database.py
 
-
 echo "" >> "${settings_path}"
 # Add logging configuration
 cat >> "${settings_path}" << 'EOF'
 # Logging
+LOG_LEVEL = 'DEBUG' if DEBUG else 'INFO'
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'handlers': {
         'file': {
-            'level': 'DEBUG',
+            'level': LOG_LEVEL,
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'log/django.log',
         },
     },
-    'loggers': {
-        'django': {
-            'handlers': ['file'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
+    'root': {
+        'handlers': ['file'],
+        'level': LOG_LEVEL,
     },
 }
+
+if DEBUG:
+    INTERNAL_IPS = ['127.0.0.1']
+    
+    INSTALLED_APPS += [
+        'debug_toolbar',
+        'django_extensions',
+    ]
+    MIDDLEWARE += [
+        'debug_toolbar.middleware.DebugToolbarMiddleware',
+    ]
+    
+    # Email settings for development
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+    
+    # Disabling caching
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        }
+    }
+else:
+    # Security settings
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+    # Email settings
+    # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    # EMAIL_HOST = env('EMAIL_HOST')
+    # EMAIL_PORT = env('EMAIL_PORT')
+    # EMAIL_HOST_USER = env('EMAIL_HOST_USER')
+    # EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
+    # EMAIL_USE_TLS = True
+    # DEFAULT_FROM_EMAIL = 'your@domain.com'
+
+    # Caching settings
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
+        }
+    }
+
+    # Settings for static files
+    STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
 EOF
 
 # Collect static files
