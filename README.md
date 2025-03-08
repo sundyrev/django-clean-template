@@ -4,9 +4,15 @@
 
 ```lua
 project_directory/
+├── .gitignore
+├── .dockerignore
+├── docker-compose.yml
 ├── conf/
 │   ├── nginx/
-│	│   └── project_name.nginx.conf
+│   ├── nginx/
+│	│   ├── nginx.conf
+│	│   ├── docker.conf
+│	│   └── project_name.conf
 │   ├── gunicorn/
 │   │   ├── project_name.gunicorn.socket
 │   │   └── project_name.gunicorn.service
@@ -14,10 +20,15 @@ project_directory/
 │		├── local.env
 │		└── production.env
 ├── env/
+├── docker/
+│   ├── Dockerfile.django
+│   └── Dockerfile.nginx
 ├── log/
+│   ├── django.log
 │   ├── gunicorn.log
-│   ├── nginx.log
-│   └── django.log
+│   └── nginx/
+│       ├── access.log
+│       └── error.log
 └── project_name/
     ├── apps/
     │   └── .../
@@ -27,17 +38,27 @@ project_directory/
     │   ├── settings.py
     │   ├── urls.py
     │   └── wsgi.py
-    ├── templates/
-    │   └── base.html
     ├── jinja2/
     │   └── j2.index.html
     ├── media/
+    │   └── uploads/
     ├── manage.py
     ├── README.md
-	└── requirements/
-		├── base.txt
-		├── local.txt
-		└── production.txt
+	├── requirements/
+	│	├── base.in
+	│	├── base.txt
+	│	├── local.in
+	│	├── local.txt
+	│	├── production.in
+	│	└── production.txt
+	├── static/
+	│	├── css/
+	│	├── js/
+	│	├── images/
+	│	└── admin/
+	├── staticfiles/
+	└── templates/
+	    └── base.html
 ```
 
 Будет необходимо указать Python интерпретатор, названиe домена и название проекта. Для установки запустите:
@@ -67,6 +88,12 @@ sudo systemctl status project_name.gunicorn.service
 ```zsh
 sudo systemctl daemon-reload
 sudo systemctl restart project_name.gunicorn.service
+```
+
+Собрать Docker образ проекта и запустить контейнеры для сервисов:
+
+```zsh
+docker-compose up --build -d
 ```
 
 Для остановки служб и удаления шаблона Django проекта, запустите:
