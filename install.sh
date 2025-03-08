@@ -18,13 +18,11 @@ validate_environment() {
     local env=$1
     env=$(echo "$env" | tr '[:upper:]' '[:lower:]')
 
-    # Проверка допустимых значений
     if [[ "$env" != "dev" && "$env" != "development" && "$env" != "production" ]]; then
         echo "Invalid environment. Please choose 'development' or 'production'"
         return 1
     fi
 
-    # Нормализация значения (упрощённая логика)
     if [[ "$env" == "dev" || "$env" == "development" ]]; then
         echo "local"
     else
@@ -59,14 +57,13 @@ sudo apt install -y python3-pip python3-dev libpq-dev postgresql postgresql-cont
 
 # Create the directory structure
 echo -e "\e[32m[INFO]\e[0m Creating project directory structure..."
-mkdir -m 755 -p "${project_path}/conf/"{nginx,gunicorn,env_vars}
-install -m 644 /dev/null "${project_path}/conf/nginx/${project_name}.nginx.conf"
-install -m 644 /dev/null "${project_path}/conf/gunicorn/${project_name}.gunicorn.socket"
-install -m 644 /dev/null "${project_path}/conf/gunicorn/${project_name}.gunicorn.service"
-mkdir -m 755 -p "${project_path}/log"
-mkdir -m 755 -p "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles}
-mkdir -m 755 -p "${project_path}/${project_name}/static/"{css,js,images,admin}
-mkdir -m 755 -p "${project_path}/${project_name}/media/uploads"
+mkdir -m 755 -p \
+    "${project_path}/docker" \
+    "${project_path}/log/nginx" \
+    "${project_path}/conf/"{nginx,gunicorn,env_vars} \
+    "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
+    "${project_path}/${project_name}/static/"{css,js,images,admin} \
+    "${project_path}/${project_name}/media/uploads"
 
 # Create requirements directory and base files
 echo -e "\e[32m[INFO]\e[0m Creating requirements files..."
@@ -128,16 +125,170 @@ whitenoise>=6.4.0
 EOL
 
 # Create log files with proper permissions
-sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx.log"
-sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx_error.log"
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/access.log"
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/error.log"
 sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/gunicorn.log"
 sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/django.log"
 
 # Create Docker files
+echo -e "\e[32m[INFO]\e[0m Creating Docker configuration files..."
 install -m 664 /dev/null "${project_path}/docker-compose.yml"
-mkdir -m 755 -p "${project_path}/docker"
+cat > "${project_path}/docker-compose.yml" << EOL
+services:
+  django:
+    container_name: django
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.django
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./media:/app/media
+    env_file:
+      - conf/env_vars/production.env
+    depends_on:
+      - database
+    networks:
+      - backend
+    restart: unless-stopped
+
+  database:
+    image: postgres:17
+    container_name: postgres
+    environment:
+      - POSTGRES_DB=${project_name}_db
+      - POSTGRES_USER=${project_name}_user
+      - POSTGRES_PASSWORD=${project_name}_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    restart: unless-stopped
+
+  nginx:
+    container_name: nginx
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./media:/app/media:ro
+      - ./static:/app/staticfiles:ro
+    depends_on:
+      - django
+    networks:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: ${project_name}_postgres_data
+
+networks:
+  frontend:
+    name: ${project_name}_frontend
+  backend:
+    name: ${project_name}_backend
+EOL
+
 install -m 664 /dev/null "${project_path}/docker/Dockerfile.django"
-# install -m 664 /dev/null "${project_path}/docker/Dockerfile.nginx"
+cat > "${project_path}/docker/Dockerfile.django" << EOL
+# Stage 1: Base build stage
+FROM python:3.11-slim AS builder
+
+# Create the app directory
+RUN mkdir /app
+
+# Set the working directory
+WORKDIR /app
+
+COPY ${project_name}/requirements/base.txt ${project_name}/requirements/production.txt /app/${project_name}/requirements/
+
+# Install dependencies first for caching benefits
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /app/${project_name}/requirements/production.txt
+
+# Stage 2: Production stage
+FROM python:3.11-slim
+
+# Set environment variables to optimize Python
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Create a non-root user
+RUN groupadd -r app-user && useradd -r -g app-user -u 1000 app-user
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the Python dependencies from the builder stage
+COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+COPY --from=builder /app /app
+
+COPY docker/entrypoint.sh /entrypoint.sh
+# Make entry file executable
+RUN chmod +x /entrypoint.sh
+
+RUN chown -R app-user:app-user /app
+
+# Switch to non-root user
+USER app-user
+
+# Start the application using Gunicorn
+ENTRYPOINT ["/entrypoint.sh"]
+EOL
+
+install -m 664 /dev/null "${project_path}/docker/Dockerfile.nginx"
+cat > "${project_path}/docker/Dockerfile.nginx" << EOL
+FROM nginx:stable-alpine
+
+# Copy the main nginx configuration file
+COPY conf/nginx/nginx.conf /etc/nginx/nginx.conf
+
+# Copy the additional configuration file for virtual hosts
+COPY conf/nginx/docker.nginx.conf /etc/nginx/conf.d/
+
+# Set ownership for the nginx configuration directory
+RUN chown -R nginx:nginx /etc/nginx/conf.d/
+
+# Create directories for nginx logs and cache
+RUN mkdir -p /var/log/nginx /var/cache/nginx
+
+# Set ownership for the log and cache directories
+RUN chown -R nginx:nginx /var/log/nginx /var/cache/nginx
+
+# Switch to the nginx user
+USER nginx
+
+# Expose ports 80 (HTTP) and 443 (HTTPS) for nginx access
+EXPOSE 80 443
+EOL
+
+install -m 664 /dev/null "${project_path}/docker/entrypoint.sh"
+cat > "${project_path}/docker/entrypoint.sh" << EOL
+#!/bin/sh
+
+echo "Applying database migrations..."
+python ${project_name}/manage.py migrate --noinput
+
+echo "Collecting static files..."
+python ${project_name}/manage.py collectstatic --noinput
+
+echo "Starting Gunicorn..."
+exec gunicorn --chdir ${project_name} config.wsgi:application \
+    --bind 0.0.0.0:8000 \
+    --workers 3 \
+    --timeout 120 \
+    --max-requests 1000 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level info
+EOL
 
 # Configure environment variables
 echo -e "\e[32m[INFO]\e[0m Configuring environment variables..."
@@ -153,7 +304,7 @@ ALLOWED_HOSTS=${project_domain},localhost
 POSTGRES_DB=${project_name}_db
 POSTGRES_USER=${project_name}_user
 POSTGRES_PASSWORD=${project_name}_password
-POSTGRES_HOST=localhost
+POSTGRES_HOST=database
 POSTGRES_PORT=5432
 EOL
 
@@ -168,7 +319,7 @@ ALLOWED_HOSTS=${project_domain}
 POSTGRES_DB=${project_name}_db
 POSTGRES_USER=${project_name}_user
 POSTGRES_PASSWORD=${project_name}_password
-POSTGRES_HOST=localhost
+POSTGRES_HOST=database
 POSTGRES_PORT=5432
 
 # Redis settings
@@ -419,8 +570,8 @@ pip-sync ${project_name}/requirements/${environment}.txt
 echo -e "\e[32m[INFO]\e[0m Creating Django project..."
 django-admin startproject config "${project_name}"
 cd "${project_name}"
-mkdir -m 755 -p apps media
 
+# Create applications directory
 echo -e "\e[32m[INFO]\e[0m Setting up applications directory..."
 touch apps/__init__.py
 
@@ -448,7 +599,7 @@ echo -e "\e[32m[INFO]\e[0m Updating Django settings..."
 settings_path=config/settings.py
 
 # Update import section
-sed -i "1,/from pathlib import Path/c\import environ\nfrom pathlib import Path" "${settings_path}"
+sed -i "1,/from pathlib import Path/c\import sys\n\nimport environ\nfrom pathlib import Path" "${settings_path}"
 
 # Update BASE_DIR definition
 sed -i "s|BASE_DIR = Path(__file__).resolve().parent.parent|BASE_DIR = Path(__file__).resolve().parent.parent.parent\n\nenv = environ.Env()\nenv.read_env(env_file=BASE_DIR / 'conf/env_vars/${environment}.env')|" "${settings_path}"
@@ -544,24 +695,6 @@ rm -f config/settings_database.py
 echo "" >> "${settings_path}"
 # Add logging configuration
 cat >> "${settings_path}" << 'EOF'
-# Logging
-LOG_LEVEL = 'DEBUG' if DEBUG else 'INFO'
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': LOG_LEVEL,
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'log/django.log',
-        },
-    },
-    'root': {
-        'handlers': ['file'],
-        'level': LOG_LEVEL,
-    },
-}
-
 if DEBUG:
     INTERNAL_IPS = ['127.0.0.1']
     
@@ -582,17 +715,63 @@ if DEBUG:
             'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
         }
     }
+
+    # Logging
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'verbose': {
+                'format': '{levelname} {asctime} {module} {message}',
+                'style': '{',
+            },
+            'simple': {
+                'format': '{levelname} {message}',
+                'style': '{',
+            },
+        },
+        'handlers': {
+            'console': {
+                'level': 'DEBUG',
+                'class': 'logging.StreamHandler',
+                'formatter': 'simple',
+                'stream': sys.stdout,
+            },
+            'file': {
+                'level': 'DEBUG',
+                'class': 'logging.FileHandler',
+                'filename': BASE_DIR / 'log/django_dev.log',
+                'formatter': 'verbose',
+            },
+        },
+        'root': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+        },
+        'loggers': {
+            'django': {
+                'handlers': ['console', 'file'],
+                'level': 'DEBUG',
+                'propagate': True,
+            },
+            'django.db.backends': {
+                'handlers': ['console'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
+        },
+    }
 else:
     # Security settings
-    SECURE_SSL_REDIRECT = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = 'DENY'
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
+    # SECURE_SSL_REDIRECT = True
+    # SESSION_COOKIE_SECURE = True
+    # CSRF_COOKIE_SECURE = True
+    # SECURE_BROWSER_XSS_FILTER = True
+    # SECURE_CONTENT_TYPE_NOSNIFF = True
+    # X_FRAME_OPTIONS = 'DENY'
+    # SECURE_HSTS_SECONDS = 31536000
+    # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    # SECURE_HSTS_PRELOAD = True
 
     # Email settings
     # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -609,6 +788,30 @@ else:
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
             'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
         }
+    }
+
+    # Logging
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'verbose': {
+                'format': '{levelname} {asctime} {module} {message}',
+                'style': '{',
+            },
+        },
+        'handlers': {
+            'console': {
+                'level': 'INFO',
+                'class': 'logging.StreamHandler',
+                'stream': sys.stdout,
+                'formatter': 'verbose',
+            },
+        },
+        'root': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
     }
 
     # Settings for static files
@@ -634,6 +837,7 @@ ListenStream=/run/${project_name}.gunicorn.sock
 [Install]
 WantedBy=sockets.target
 EOF
+chmod 644 "${gunicorn_socket}"
 
 cat <<EOF > "${gunicorn_service}"
 [Unit]
@@ -657,6 +861,7 @@ ExecStart=${project_path}/env/bin/gunicorn \
 [Install]
 WantedBy=multi-user.target
 EOF
+chmod 644 "${gunicorn_service}"
 
 sudo ln -s "${gunicorn_service}" "/etc/systemd/system/${project_name}.gunicorn.service"
 sudo ln -s "${gunicorn_socket}" "/etc/systemd/system/${project_name}.gunicorn.socket"
@@ -669,15 +874,60 @@ sudo systemctl enable "${project_name}.gunicorn.socket"
 
 # Configure Nginx
 echo -e "\e[32m[INFO]\e[0m Setting up Nginx configuration..."
-nginx_conf="${project_path}/conf/nginx/${project_name}.nginx.conf"
-
+nginx_conf="${project_path}/conf/nginx/nginx.conf"
 cat <<EOF > "${nginx_conf}"
+worker_processes auto;
+
+events {
+    worker_connections 2048;
+    multi_accept on;
+    use epoll;
+}
+
+pid /var/cache/nginx/nginx.pid;
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    server_tokens off;
+
+    open_file_cache max=1000 inactive=20s;
+    open_file_cache_valid 30s;
+    open_file_cache_min_uses 2;
+    open_file_cache_errors on;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
+    
+    include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/sites-enabled/*;
+}
+EOF
+chmod 644 "${nginx_conf}"
+
+project_nginx_conf="${project_path}/conf/nginx/${project_name}.conf"
+cat <<EOF > "${project_nginx_conf}"
 server {
     listen 80;
     server_name ${project_domain};
 
-    access_log ${project_path}/log/nginx.log;
-    error_log ${project_path}/log/nginx_error.log;
+    access_log ${project_path}/log/nginx/access.log;
+    error_log ${project_path}/log/nginx/error.log;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
 
     location = /favicon.ico {
         access_log off;
@@ -686,20 +936,112 @@ server {
 
     location /static/ {
         alias ${project_path}/${project_name}/staticfiles/;
+        add_header Cache-Control "public";
+        expires 7d;
+        access_log off;
     }
 
     location /media/ {
-        autoindex on;
         alias ${project_path}/${project_name}/media/;
+        add_header Cache-Control "public";
+        expires 30d;
     }
 
     location / {
-        include proxy_params;
+        # Forward requests to Django application
         proxy_pass http://unix:/run/${project_name}.gunicorn.sock;
+
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        send_timeout 60s;
+
+        proxy_no_cache 1;
+        proxy_cache_bypass 1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        
+        client_max_body_size 100M;
     }
 }
 EOF
+chmod 644 "${project_nginx_conf}"
 
-sudo ln -s "${nginx_conf}" /etc/nginx/sites-enabled
+docker_nginx_conf="${project_path}/conf/nginx/docker.conf"
+cat <<EOF > "${docker_nginx_conf}"
+server {
+    listen 80;
+    server_name ${project_domain};
+
+    error_log /dev/stderr warn;
+    access_log /dev/stdout;
+
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+
+    # Content Security Policy (CSP) to prevent XSS and other attacks.
+    # - 'self' allows loading resources only from your domain.
+    # - 'data:' allows embedded images (e.g., base64).
+    # Adjust this policy based on your app's requirements (e.g., external APIs, CDNs).
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;";
+
+    # HTTP Strict Transport Security (HSTS) to enforce HTTPS.
+    # - Uncomment this ONLY after enabling HTTPS.
+    # - 'max-age=31536000' enforces HTTPS for 1 year.
+    # - 'includeSubDomains' applies HTTPS to all subdomains.
+    # - 'preload' allows adding your domain to the HSTS preload list (e.g., Chrome).
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+
+    location = /favicon.ico {
+        access_log off;
+        log_not_found off;
+    }
+
+    location /static/ {
+        alias /app/staticfiles/;
+        add_header Cache-Control "public";
+        expires 1y;
+        access_log off;
+    }
+
+    location /media/ {
+        alias /app/media/;
+        add_header Cache-Control "public";
+        expires 30d;
+    }
+
+    location / {
+        # Forward requests to Django application
+        proxy_pass http://django:8000;
+
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        send_timeout 60s;
+
+        proxy_no_cache 1;
+        proxy_cache_bypass 1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+
+        client_max_body_size 100M;
+    }
+}
+EOF
+chmod 644 "${docker_nginx_conf}"
+
+sudo ln -sf /run/nginx.pid /var/cache/nginx/nginx.pid
+sudo ln -sf "${project_nginx_conf}" /etc/nginx/sites-enabled/${project_name}.conf
 sudo nginx -t && sudo systemctl restart nginx
 echo -e "\e[32m[INFO]\e[0m Django project setup completed successfully."
+

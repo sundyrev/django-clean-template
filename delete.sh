@@ -14,7 +14,7 @@ if [[ -z "$project_path" ]]; then
     exit 1
 fi
 
-read -e -p $'Are you sure you want to delete the project at ${project_path}? [y/N]: ' confirm
+read -e -p "Are you sure you want to delete the project at ${project_path}? [y/N]: " confirm
 if [[ "${confirm}" != "y" && "${confirm}" != "Y" ]]; then
     echo -e "\e[32m[INFO]\e[0m Deletion canceled."
     exit 0
@@ -44,10 +44,19 @@ echo -e "\e[32m[INFO]\e[0m Reloading systemd to refresh the configuration..."
 sudo systemctl daemon-reload &>/dev/null
 
 echo -e "\e[32m[INFO]\e[0m Removing Nginx configuration..."
-if [[ -f "/etc/nginx/sites-enabled/${project_name}.nginx.conf" ]]; then
-    sudo rm "/etc/nginx/sites-enabled/${project_name}.nginx.conf" &>/dev/null
-    sudo systemctl reload nginx &>/dev/null
-fi
+# Remove project-specific nginx config
+configs=("nginx.conf" "${project_name}.conf" "docker.conf")
+for conf in "${configs[@]}"; do
+    for dir in "/etc/nginx/sites-enabled" "/etc/nginx/sites-available"; do
+        if [[ -f "${dir}/$conf" ]]; then
+            # echo -e "\e[32m[INFO]\e[0m Removing $conf from $dir..."
+            sudo rm "${dir}/$conf" &>/dev/null
+        fi
+    done
+done
+
+# Reload nginx after removing configs
+sudo systemctl reload nginx &>/dev/null
 
 if [[ -d "$project_path" ]]; then
     echo -e "\e[32m[INFO]\e[0m Deleting the project folder $project_path..."
