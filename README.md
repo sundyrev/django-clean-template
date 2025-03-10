@@ -9,7 +9,6 @@ project_directory/
 ├── docker-compose.yml
 ├── conf/
 │   ├── nginx/
-│   ├── nginx/
 │	│   ├── nginx.conf
 │	│   ├── docker.conf
 │	│   └── project_name.conf
@@ -94,6 +93,14 @@ sudo systemctl restart project_name.gunicorn.service
 
 ```zsh
 docker-compose up --build -d
+```
+
+Просмотреть логи контейнеров nginx или gunicorn:
+
+```zsh
+docker-compose logs nginx
+# с отслеживанием в реальном времени
+docker-compose logs -f django
 ```
 
 Для остановки служб и удаления шаблона Django проекта, запустите:

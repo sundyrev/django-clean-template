@@ -251,7 +251,7 @@ FROM nginx:stable-alpine
 COPY conf/nginx/nginx.conf /etc/nginx/nginx.conf
 
 # Copy the additional configuration file for virtual hosts
-COPY conf/nginx/docker.nginx.conf /etc/nginx/conf.d/
+COPY conf/nginx/docker.conf /etc/nginx/conf.d/
 
 # Set ownership for the nginx configuration directory
 RUN chown -R nginx:nginx /etc/nginx/conf.d/
@@ -1040,8 +1040,25 @@ server {
 EOF
 chmod 644 "${docker_nginx_conf}"
 
-sudo ln -sf /run/nginx.pid /var/cache/nginx/nginx.pid
-sudo ln -sf "${project_nginx_conf}" /etc/nginx/sites-enabled/${project_name}.conf
-sudo nginx -t && sudo systemctl restart nginx
-echo -e "\e[32m[INFO]\e[0m Django project setup completed successfully."
+# Specify the correct PID file for Nginx in systemd
+sudo mkdir -p /etc/systemd/system/nginx.service.d
+echo -e "[Service]\nPIDFile=/var/cache/nginx/nginx.pid" | sudo tee /etc/systemd/system/nginx.service.d/override.conf > /dev/null
 
+# Reload systemd to apply changes
+sudo systemctl daemon-reload
+
+# Create a symbolic link for Nginx configuration
+if [[ ! -f "/etc/nginx/sites-enabled/${project_name}.conf" ]]; then
+    sudo ln -sf "${project_nginx_conf}" "/etc/nginx/sites-enabled/${project_name}.conf"
+fi
+
+# Validate Nginx configuration before restarting
+if sudo nginx -t; then
+    echo -e "\e[32m[INFO]\e[0m Restarting Nginx..."
+    sudo systemctl restart nginx
+else
+    echo -e "\e[31m[ERROR]\e[0m Nginx configuration test failed!"
+    exit 1
+fi
+
+echo -e "\e[32m[INFO]\e[0m Django project setup completed successfully."

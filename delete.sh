@@ -28,32 +28,31 @@ if [[ "$project_path" == "$script_dir" ]]; then
 fi
 
 echo -e "\e[32m[INFO]\e[0m Stopping the Gunicorn socket..."
-sudo systemctl stop ${project_name}.gunicorn.socket &>/dev/null
+sudo systemctl stop "${project_name}.gunicorn.socket" &>/dev/null
 
 echo -e "\e[32m[INFO]\e[0m Stopping the Gunicorn service..."
-sudo systemctl stop ${project_name}.gunicorn.service &>/dev/null
+sudo systemctl stop "${project_name}.gunicorn.service" &>/dev/null
 
 echo -e "\e[32m[INFO]\e[0m Disabling the Gunicorn service and socket..."
-sudo systemctl disable ${project_name}.gunicorn.service &>/dev/null
-sudo systemctl disable ${project_name}.gunicorn.socket &>/dev/null
+sudo systemctl disable "${project_name}.gunicorn.service" &>/dev/null
+sudo systemctl disable "${project_name}.gunicorn.socket" &>/dev/null
 
-echo -e "\e[32m[INFO]\e[0m Removing symbolic links for the Gunicorn service and socket..."
-sudo find /etc/systemd/system -type l -name "${project_name}.gunicorn.*" -delete
+# Remove systemd only if this service exists
+if systemctl list-units --full --all | grep -q "${project_name}.gunicorn.service"; then
+    echo -e "\e[32m[INFO]\e[0m Removing Gunicorn service and socket files..."
+    sudo rm -f "/etc/systemd/system/${project_name}.gunicorn.service"
+    sudo rm -f "/etc/systemd/system/${project_name}.gunicorn.socket"
+fi
 
 echo -e "\e[32m[INFO]\e[0m Reloading systemd to refresh the configuration..."
 sudo systemctl daemon-reload &>/dev/null
 
 echo -e "\e[32m[INFO]\e[0m Removing Nginx configuration..."
-# Remove project-specific nginx config
-configs=("nginx.conf" "${project_name}.conf" "docker.conf")
-for conf in "${configs[@]}"; do
-    for dir in "/etc/nginx/sites-enabled" "/etc/nginx/sites-available"; do
-        if [[ -f "${dir}/$conf" ]]; then
-            # echo -e "\e[32m[INFO]\e[0m Removing $conf from $dir..."
-            sudo rm "${dir}/$conf" &>/dev/null
-        fi
-    done
-done
+# Remove only the configuration of the current project
+nginx_config="/etc/nginx/sites-enabled/${project_name}.conf"
+if [[ -f "$nginx_config" ]]; then
+    sudo rm "$nginx_config" &>/dev/null
+fi
 
 # Reload nginx after removing configs
 sudo systemctl reload nginx &>/dev/null
