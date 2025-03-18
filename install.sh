@@ -200,17 +200,17 @@ cat > "${project_path}/docker/Dockerfile.django" << EOL
 # Stage 1: Base build stage
 FROM python:3.11-slim AS builder
 
-# Create the app directory
-RUN mkdir /app
+# Install uv
+RUN pip install --no-cache-dir uv
 
-# Set the working directory
+# Create the app directory
 WORKDIR /app
 
+# Copy requirement files
 COPY ${project_name}/requirements/base.txt ${project_name}/requirements/production.txt /app/${project_name}/requirements/
 
-# Install dependencies first for caching benefits
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /app/${project_name}/requirements/production.txt
+# Install dependencies using uv in system-wide mode
+RUN uv pip install --system --no-cache-dir -r /app/${project_name}/requirements/production.txt
 
 # Stage 2: Production stage
 FROM python:3.11-slim
@@ -219,13 +219,16 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+# Install uv again in the final image
+RUN pip install --no-cache-dir uv
+
 # Create a non-root user
 RUN groupadd -r app-user && useradd -r -g app-user -u 1000 app-user
 
 # Set the working directory
 WORKDIR /app
 
-# Copy the Python dependencies from the builder stage
+# Copy installed dependencies from the builder stage
 COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY --from=builder /app /app
@@ -545,26 +548,30 @@ conf/env_vars/*.env
 *.tmp
 EOL
 
-# Set up Python virtual environment
+# Set up Python virtual environment with uv
 echo -e "\e[32m[INFO]\e[0m Setting up Python virtual environment..."
 cd "${project_path}"
-${base_python_interpreter} -m venv env
-source env/bin/activate
 
-# Upgrade pip and install pip-tools
-echo -e "\e[32m[INFO]\e[0m Upgrading pip and installing pip-tools..."
-pip install --upgrade pip
-pip install pip-tools
+if ! command -v uv &> /dev/null; then
+    echo -e "\e[32m[INFO]\e[0m Installing uv..."
+    ${base_python_interpreter} -m pip install --user uv
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
+# Create virtual environment and activate it
+uv venv "${project_path}/env" || { echo -e "\e[31m[ERROR]\e[0m Failed to create virtual environment"; exit 1; }
+export VIRTUAL_ENV="${project_path}/env"
+export PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 # Compile requirements files
 echo -e "\e[32m[INFO]\e[0m Compiling requirements files..."
-pip-compile ${project_name}/requirements/base.in --no-strip-extras --output-file ${project_name}/requirements/base.txt
-pip-compile ${project_name}/requirements/local.in --no-strip-extras --output-file ${project_name}/requirements/local.txt
-pip-compile ${project_name}/requirements/production.in --no-strip-extras --output-file ${project_name}/requirements/production.txt
+uv pip compile "${project_path}/${project_name}/requirements/base.in" -o "${project_path}/${project_name}/requirements/base.txt"
+uv pip compile "${project_path}/${project_name}/requirements/local.in" -o "${project_path}/${project_name}/requirements/local.txt"
+uv pip compile "${project_path}/${project_name}/requirements/production.in" -o "${project_path}/${project_name}/requirements/production.txt"
 
 # Install dependencies based on environment
 echo -e "\e[32m[INFO]\e[0m Installing ${environment} dependencies..."
-pip-sync ${project_name}/requirements/${environment}.txt
+uv pip sync "${project_path}/${project_name}/requirements/${environment}.txt"
 
 # Create Django project
 echo -e "\e[32m[INFO]\e[0m Creating Django project..."
