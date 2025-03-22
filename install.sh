@@ -304,7 +304,7 @@ ALLOWED_HOSTS=${project_domain},localhost
 POSTGRES_DB=${project_name}_db
 POSTGRES_USER=${project_name}_user
 POSTGRES_PASSWORD=${project_name}_password
-POSTGRES_HOST=database
+POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 EOL
 
@@ -331,6 +331,17 @@ POSTGRES_PORT=5432
 #EMAIL_HOST_USER
 #EMAIL_HOST_PASSWORD
 EOL
+
+# Create PostgreSQL user and database
+echo -e "\e[32m[INFO]\e[0m Creating PostgreSQL user and database..."
+sudo -u postgres psql <<EOF
+CREATE USER ${project_name}_user WITH PASSWORD '${project_name}_password';
+CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;
+ALTER ROLE ${project_name}_user SET client_encoding TO 'utf8';
+ALTER ROLE ${project_name}_user SET default_transaction_isolation TO 'read committed';
+ALTER ROLE ${project_name}_user SET timezone TO 'UTC';
+GRANT ALL PRIVILEGES ON DATABASE ${project_name}_db TO ${project_name}_user;
+EOF
 
 # Create .gitignore file
 install -m 644 /dev/null "${project_path}/.gitignore"
@@ -751,12 +762,17 @@ if DEBUG:
         'loggers': {
             'django': {
                 'handlers': ['console', 'file'],
-                'level': 'DEBUG',
+                'level': 'INFO',
                 'propagate': True,
             },
             'django.db.backends': {
                 'handlers': ['console'],
-                'level': 'DEBUG',
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'django.utils.autoreload': {
+                'handlers': ['console'],
+                'level': 'WARNING',
                 'propagate': False,
             },
         },
