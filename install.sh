@@ -335,8 +335,20 @@ EOL
 # Create PostgreSQL user and database
 echo -e "\e[32m[INFO]\e[0m Creating PostgreSQL user and database..."
 sudo -u postgres psql <<EOF
-CREATE USER ${project_name}_user WITH PASSWORD '${project_name}_password';
-CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;
+DO \$\$ 
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${project_name}_user') THEN
+        CREATE USER ${project_name}_user WITH PASSWORD '${project_name}_password';
+    ELSE
+        RAISE NOTICE 'User ${project_name}_user already exists. Skipping creation.';
+    END IF;
+
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${project_name}_db') THEN
+        CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;
+    ELSE
+        RAISE NOTICE 'Database ${project_name}_db already exists. Skipping creation.';
+    END IF;
+END \$\$;
 ALTER ROLE ${project_name}_user SET client_encoding TO 'utf8';
 ALTER ROLE ${project_name}_user SET default_transaction_isolation TO 'read committed';
 ALTER ROLE ${project_name}_user SET timezone TO 'UTC';
@@ -605,6 +617,16 @@ def environment(**options):
     return env
 EOF
 
+# Update settings/urls.py
+urls_path=config/urls.py
+sed -i "1,/from django.urls import path/c\from django.contrib import admin\nfrom django.urls import path, include\nfrom django.conf import settings" "${urls_path}"
+echo "" >> "${urls_path}"
+# Add debug toolbar urls settings
+cat >> "${urls_path}" << 'EOF'
+if settings.DEBUG:
+    urlpatterns.append(path('__debug__/', include('debug_toolbar.urls')))
+EOF
+
 # Update settings/base.py
 echo -e "\e[32m[INFO]\e[0m Updating Django settings..."
 settings_path=config/settings.py
@@ -751,7 +773,7 @@ if DEBUG:
             'file': {
                 'level': 'DEBUG',
                 'class': 'logging.FileHandler',
-                'filename': BASE_DIR / 'log/django_dev.log',
+                'filename': BASE_DIR / 'log/django.log',
                 'formatter': 'verbose',
             },
         },
