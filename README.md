@@ -71,9 +71,9 @@ project_directory/
 Проект использует `pip-tools` для управления зависимостями. При необходимости добавить новую зависимость:
 
 ```zsh
-echo "new-package>=1.0.0" >> requirements/local.in
-pip-compile requirements/local.in
-pip-sync requirements/local.txt
+echo "new-package>=1.0.0" >> project_name/requirements/local.in
+pip-compile project_name/requirements/local.in
+pip-sync project_name/requirements/local.txt
 ```
 
 Посмотреть статус службы gunicorn:

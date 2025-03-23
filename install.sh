@@ -298,7 +298,7 @@ install -m 644 /dev/null "${project_path}/conf/env_vars/local.env"
 cat > "${project_path}/conf/env_vars/local.env" << EOL
 DEBUG=True
 #SECRET_KEY=insert-your-secret-key-here
-ALLOWED_HOSTS=${project_domain},localhost
+ALLOWED_HOSTS=${project_domain},127.0.0.1
 
 # PostgreSQL settings
 POSTGRES_DB=${project_name}_db
@@ -334,25 +334,27 @@ EOL
 
 # Create PostgreSQL user and database
 echo -e "\e[32m[INFO]\e[0m Creating PostgreSQL user and database..."
-sudo -u postgres psql <<EOF
-DO \$\$ 
+sudo -u postgres psql -q <<EOF
+DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${project_name}_user') THEN
         CREATE USER ${project_name}_user WITH PASSWORD '${project_name}_password';
+        ALTER ROLE ${project_name}_user SET client_encoding TO 'utf8';
+        ALTER ROLE ${project_name}_user SET default_transaction_isolation TO 'read committed';
+        ALTER ROLE ${project_name}_user SET timezone TO 'UTC';
+        RAISE NOTICE 'User ${project_name}_user created with settings.';
     ELSE
-        RAISE NOTICE 'User ${project_name}_user already exists. Skipping creation.';
+        RAISE NOTICE 'User ${project_name}_user already exists. Skipping creation and settings.';
     END IF;
-
+    
     IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${project_name}_db') THEN
         CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;
+        GRANT ALL PRIVILEGES ON DATABASE ${project_name}_db TO ${project_name}_user;
+        RAISE NOTICE 'Database ${project_name}_db created with privileges.';
     ELSE
-        RAISE NOTICE 'Database ${project_name}_db already exists. Skipping creation.';
+        RAISE NOTICE 'Database ${project_name}_db already exists. Skipping creation and privileges.';
     END IF;
 END \$\$;
-ALTER ROLE ${project_name}_user SET client_encoding TO 'utf8';
-ALTER ROLE ${project_name}_user SET default_transaction_isolation TO 'read committed';
-ALTER ROLE ${project_name}_user SET timezone TO 'UTC';
-GRANT ALL PRIVILEGES ON DATABASE ${project_name}_db TO ${project_name}_user;
 EOF
 
 # Create .gitignore file
@@ -986,8 +988,8 @@ server {
     }
 
     location / {
-        # Forward requests to Django application
         proxy_pass http://unix:/run/${project_name}.gunicorn.sock;
+        error_page 502 = @fallback;
 
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -1004,6 +1006,15 @@ server {
         add_header Cache-Control "no-cache, no-store, must-revalidate";
         
         client_max_body_size 100M;
+    }
+
+    location @fallback {
+        proxy_pass http://127.0.0.1:8000;
+
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 EOF
