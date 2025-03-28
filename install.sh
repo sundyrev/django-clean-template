@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Check if pyenv is installed
 if ! command -v pyenv &> /dev/null; then
@@ -13,50 +14,43 @@ project_path=$(dirname "$(realpath "$0")")
 project_name=""
 environment=""
 
-# Function to validate environment input
-validate_environment() {
-    local env=$1
-    env=$(echo "$env" | tr '[:upper:]' '[:lower:]')
-
-    if [[ "$env" != "dev" && "$env" != "development" && "$env" != "production" ]]; then
-        echo "Invalid environment. Please choose 'development' or 'production'"
-        return 1
-    fi
-
-    if [[ "$env" == "dev" || "$env" == "development" ]]; then
-        echo "local"
-    else
-        echo "production"
-    fi
-
-    return 0
-}
-
 # Prompt for user input
-read -e -p "Python interpreter (default: ${default_python_interpreter}): " base_python_interpreter
-read -e -p "Your domain without protocol (e.g., example.com): " project_domain
-read -e -p "Project name: " project_name
+read -e -p $'\e[90m[1/4]\e[0m Python interpreter \e[33m(default: '"${default_python_interpreter}"$')\e[0m: ' base_python_interpreter
+read -e -p $'\e[90m[2/4]\e[0m Your domain without protocol \e[33m(e.g., example.com)\e[0m: ' project_domain
+read -e -p $'\e[90m[3/4]\e[0m Project name: ' project_name
 
 # Environment selection with validation
+echo -e "\e[90m[4/4]\e[0m Select environment:"
+echo $'\e[95m1\e[0m - Development'
+echo $'\e[95m2\e[0m - Production'
+
 while true; do
-    read -e -p $'Select environment (Development \e[36m[dev]\e[0m/Production): ' environment
-    normalized_environment=$(validate_environment "$environment")
-    if [[ $? -eq 0 ]]; then
-        environment="$normalized_environment"
-        break
-    fi
+    read -e -p $'Choose from \e[95m[1/2]\e[0m: ' env_choice
+    case "$env_choice" in
+        1|"")
+            environment="local"
+            break
+            ;;
+        2)
+            environment="production"
+            break
+            ;;
+        *)
+            echo -e "\e[91m[ERROR]\e[0m Invalid choice. Please enter \e[95m1\e[0m or \e[95m2\e[0m."
+            ;;
+    esac
 done
 
 # Set defaults if not provided
 base_python_interpreter=${base_python_interpreter:-${default_python_interpreter}}
 
 # Install necessary packages
-echo -e "\e[32m[INFO]\e[0m Installing necessary packages..."
+echo -e "\e[90m[INFO]\e[0m Installing necessary packages..."
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3-pip python3-dev libpq-dev postgresql postgresql-contrib nginx curl
 
 # Create the directory structure
-echo -e "\e[32m[INFO]\e[0m Creating project directory structure..."
+echo -e "\e[90m[INFO]\e[0m Creating project directory structure..."
 mkdir -m 755 -p \
     "${project_path}/docker" \
     "${project_path}/log/nginx" \
@@ -66,7 +60,7 @@ mkdir -m 755 -p \
     "${project_path}/${project_name}/media/uploads"
 
 # Create requirements directory and base files
-echo -e "\e[32m[INFO]\e[0m Creating requirements files..."
+echo -e "\e[90m[INFO]\e[0m Creating requirements files..."
 cat > "${project_path}/${project_name}/requirements/base.in" << EOL
 # Main framework
 Django>=5.0,<5.1
@@ -131,7 +125,7 @@ sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/guni
 sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/django.log"
 
 # Create Docker files
-echo -e "\e[32m[INFO]\e[0m Creating Docker configuration files..."
+echo -e "\e[90m[INFO]\e[0m Creating Docker configuration files..."
 install -m 664 /dev/null "${project_path}/docker-compose.yml"
 cat > "${project_path}/docker-compose.yml" << EOL
 services:
@@ -148,12 +142,12 @@ services:
     env_file:
       - conf/env_vars/production.env
     depends_on:
-      - database
+      - postgres
     networks:
       - backend
     restart: unless-stopped
 
-  database:
+  postgres:
     image: postgres:17
     container_name: postgres
     environment:
@@ -291,14 +285,15 @@ exec gunicorn --chdir ${project_name} config.wsgi:application \
 EOL
 
 # Configure environment variables
-echo -e "\e[32m[INFO]\e[0m Configuring environment variables..."
+echo -e "\e[90m[INFO]\e[0m Configuring environment variables..."
 
 # Create local environment file with proper permissions
 install -m 644 /dev/null "${project_path}/conf/env_vars/local.env"
 cat > "${project_path}/conf/env_vars/local.env" << EOL
 DEBUG=True
-#SECRET_KEY=insert-your-secret-key-here
+SECRET_KEY=
 ALLOWED_HOSTS=${project_domain},127.0.0.1
+DJANGO_SETTINGS_MODULE=config.settings.local
 
 # PostgreSQL settings
 POSTGRES_DB=${project_name}_db
@@ -312,28 +307,29 @@ EOL
 install -m 644 /dev/null "${project_path}/conf/env_vars/production.env"
 cat > "${project_path}/conf/env_vars/production.env" << EOL
 DEBUG=False
-#SECRET_KEY=insert-your-secret-key-here
+SECRET_KEY=
 ALLOWED_HOSTS=${project_domain}
+DJANGO_SETTINGS_MODULE=config.settings.production
 
 # PostgreSQL settings
 POSTGRES_DB=${project_name}_db
 POSTGRES_USER=${project_name}_user
 POSTGRES_PASSWORD=${project_name}_password
-POSTGRES_HOST=database
+POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 
 # Redis settings
-#REDIS_URL
+REDIS_URL=redis://redis:6379/1
 
 # Email settings
-#EMAIL_HOST
-#EMAIL_PORT
-#EMAIL_HOST_USER
-#EMAIL_HOST_PASSWORD
+EMAIL_HOST=smtp.your-email.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=your-email@example.com
+EMAIL_HOST_PASSWORD=your-email-password
 EOL
 
 # Create PostgreSQL user and database
-echo -e "\e[32m[INFO]\e[0m Creating PostgreSQL user and database..."
+echo -e "\e[90m[INFO]\e[0m Creating PostgreSQL user and database..."
 sudo -u postgres psql -q <<EOF
 DO \$\$
 BEGIN
@@ -571,44 +567,46 @@ conf/env_vars/*.env
 EOL
 
 # Set up Python virtual environment
-echo -e "\e[32m[INFO]\e[0m Setting up Python virtual environment..."
+echo -e "\e[90m[INFO]\e[0m Setting up Python virtual environment..."
 cd "${project_path}"
 ${base_python_interpreter} -m venv env
+
+# Add DJANGO_SETTINGS_MODULE to the virtual environment's activate script
+echo -e "\e[90m[INFO]\e[0m Adding DJANGO_SETTINGS_MODULE to activate script..."
+echo "export DJANGO_SETTINGS_MODULE=config.settings.${environment}" >> "${project_path}/env/bin/activate"
 source env/bin/activate
 
 # Upgrade pip and install pip-tools
-echo -e "\e[32m[INFO]\e[0m Upgrading pip and installing pip-tools..."
+echo -e "\e[90m[INFO]\e[0m Upgrading pip and installing pip-tools..."
 pip install --upgrade pip
 pip install pip-tools
 
 # Compile requirements files
-echo -e "\e[32m[INFO]\e[0m Compiling requirements files..."
+echo -e "\e[90m[INFO]\e[0m Compiling requirements files..."
 pip-compile ${project_name}/requirements/base.in --no-strip-extras --output-file ${project_name}/requirements/base.txt
 pip-compile ${project_name}/requirements/local.in --no-strip-extras --output-file ${project_name}/requirements/local.txt
 pip-compile ${project_name}/requirements/production.in --no-strip-extras --output-file ${project_name}/requirements/production.txt
 
 # Install dependencies based on environment
-echo -e "\e[32m[INFO]\e[0m Installing ${environment} dependencies..."
+echo -e "\e[90m[INFO]\e[0m Installing ${environment} dependencies..."
 pip-sync ${project_name}/requirements/${environment}.txt
 
 # Create Django project
-echo -e "\e[32m[INFO]\e[0m Creating Django project..."
+echo -e "\e[90m[INFO]\e[0m Creating Django project..."
 django-admin startproject config "${project_name}"
 cd "${project_name}"
 
 # Create applications directory
-echo -e "\e[32m[INFO]\e[0m Setting up applications directory..."
+echo -e "\e[90m[INFO]\e[0m Setting up applications directory..."
 touch apps/__init__.py
 
 # Create Jinja2 environment configuration
-echo -e "\e[32m[INFO]\e[0m Creating Jinja2 environment configuration..."
+echo -e "\e[90m[INFO]\e[0m Creating Jinja2 environment configuration..."
 mkdir -m 755 -p config
 cat <<EOF > config/jinja2.py
 from django.templatetags.static import static
 from django.urls import reverse
-
 from jinja2 import Environment
-
 
 def environment(**options):
     env = Environment(**options)
@@ -619,60 +617,47 @@ def environment(**options):
     return env
 EOF
 
-# Update settings/urls.py
-urls_path=config/urls.py
-sed -i "1,/from django.urls import path/c\from django.contrib import admin\nfrom django.urls import path, include\nfrom django.conf import settings" "${urls_path}"
-echo "" >> "${urls_path}"
-# Add debug toolbar urls settings
-cat >> "${urls_path}" << 'EOF'
-if settings.DEBUG:
-    urlpatterns.append(path('__debug__/', include('debug_toolbar.urls')))
-EOF
+# Create settings directory and split settings files
+echo -e "\e[90m[INFO]\e[0m Creating settings directory and split settings files..."
+mkdir -m 755 -p config/settings
+install -m 644 /dev/null config/settings/__init__.py
+install -m 644 /dev/null config/settings/base.py
+install -m 644 /dev/null config/settings/local.py
+install -m 644 /dev/null config/settings/production.py
 
-# Update settings/base.py
-echo -e "\e[32m[INFO]\e[0m Updating Django settings..."
-settings_path=config/settings.py
+# Populate settings/base.py
+cat > config/settings/base.py << EOF
+import sys
+from pathlib import Path
+import environ
 
-# Update import section
-sed -i "1,/from pathlib import Path/c\import sys\n\nimport environ\nfrom pathlib import Path" "${settings_path}"
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+BASE_DIR = Path(__file__).resolve().parents[3]
 
-# Update BASE_DIR definition
-sed -i "s|BASE_DIR = Path(__file__).resolve().parent.parent|BASE_DIR = Path(__file__).resolve().parent.parent.parent\n\nenv = environ.Env()\nenv.read_env(env_file=BASE_DIR / 'conf/env_vars/${environment}.env')|" "${settings_path}"
+env = environ.Env()
 
-# Add environment-based SECRET_KEY setting
-sed -i "/SECRET_KEY =/a # SECRET_KEY= env('SECRET_KEY')" "${settings_path}"
-
-# Update DEBUG setting
-sed -i "s/DEBUG = True/DEBUG = env.bool('DEBUG', default=False)/" "${settings_path}"
-
-# Update ALLOWED_HOSTS setting
-sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=\['localhost'\])/" "${settings_path}"
-
-# Update STATIC and MEDIA settings
-cat > config/settings_static.py << EOF
-STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / '${project_name}/staticfiles'
-STATICFILES_DIRS = [
-    BASE_DIR / '${project_name}/static',
+# Application definition
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
 ]
 
-MEDIA_URL = '/media/'
-EOF
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
 
-# Update MEDIA_ROOT setting depending on the environment
-if [ "$environment" = "production" ]; then
-    echo "MEDIA_ROOT = '/var/www/myproject/media/'" >> config/settings_static.py
-else
-    echo "MEDIA_ROOT = BASE_DIR / '${project_name}/media'" >> config/settings_static.py
-fi
-sed -i '
-/^STATIC_URL = /r config/settings_static.py
-/^STATIC_URL = /d
-' "${settings_path}"
-rm -f config/settings_static.py
+ROOT_URLCONF = "config.urls"
 
-# Update TEMPLATES setting
-cat > config/settings_templates.py << EOF
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.jinja2.Jinja2',
@@ -696,17 +681,48 @@ TEMPLATES = [
         },
     },
 ]
-EOF
-sed -i '
-/^TEMPLATES = \[/,/^]/{
-/^TEMPLATES = \[/r config/settings_templates.py
-d
-}
-' "${settings_path}"
-rm -f config/settings_templates.py
 
-# Update DATABASES setting
-cat > config/settings_database.py << 'EOF'
+WSGI_APPLICATION = "config.wsgi.application"
+
+# Password validation
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+# Internationalization
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+USE_I18N = True
+USE_TZ = True
+
+# Static files (CSS, JavaScript, Images)
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / '${project_name}/staticfiles'
+STATICFILES_DIRS = [BASE_DIR / '${project_name}/static']
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / '${project_name}/media'
+
+# Default primary key field type
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+EOF
+
+# Populate settings/local.py
+cat > config/settings/local.py << EOF
+from .base import *
+
+env.read_env(env_file=BASE_DIR / 'conf/env_vars/local.env')
+SECRET_KEY = env('SECRET_KEY')
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = True
+
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
+
+# Database for local development
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
@@ -718,152 +734,195 @@ DATABASES = {
         'AUTOCOMMIT': True,
     }
 }
-EOF
-sed -i '
-/^DATABASES = {/,/^}/{
-/^DATABASES = {/r config/settings_database.py
-d
+
+# Development tools
+INTERNAL_IPS = ['127.0.0.1']
+
+INSTALLED_APPS += [
+    'debug_toolbar',
+    'django_extensions',
+]
+
+MIDDLEWARE += [
+    'debug_toolbar.middleware.DebugToolbarMiddleware',
+]
+
+# Email settings for development
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Disabling caching
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+    }
 }
-' "${settings_path}"
-rm -f config/settings_database.py
 
-echo "" >> "${settings_path}"
-# Add logging configuration
-cat >> "${settings_path}" << 'EOF'
-if DEBUG:
-    INTERNAL_IPS = ['127.0.0.1']
-    
-    INSTALLED_APPS += [
-        'debug_toolbar',
-        'django_extensions',
-    ]
-    MIDDLEWARE += [
-        'debug_toolbar.middleware.DebugToolbarMiddleware',
-    ]
-    
-    # Email settings for development
-    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-    
-    # Disabling caching
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
-        }
-    }
-
-    # Logging
-    LOGGING = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'verbose': {
-                'format': '{levelname} {asctime} {module} {message}',
-                'style': '{',
-            },
-            'simple': {
-                'format': '{levelname} {message}',
-                'style': '{',
-            },
+# Logging for development
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
         },
-        'handlers': {
-            'console': {
-                'level': 'DEBUG',
-                'class': 'logging.StreamHandler',
-                'formatter': 'simple',
-                'stream': sys.stdout,
-            },
-            'file': {
-                'level': 'DEBUG',
-                'class': 'logging.FileHandler',
-                'filename': BASE_DIR / 'log/django.log',
-                'formatter': 'verbose',
-            },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
         },
-        'root': {
-            'handlers': ['console', 'file'],
+    },
+    'handlers': {
+        'console': {
             'level': 'DEBUG',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+            'stream': sys.stdout,
         },
-        'loggers': {
-            'django': {
-                'handlers': ['console', 'file'],
-                'level': 'INFO',
-                'propagate': True,
-            },
-            'django.db.backends': {
-                'handlers': ['console'],
-                'level': 'INFO',
-                'propagate': False,
-            },
-            'django.utils.autoreload': {
-                'handlers': ['console'],
-                'level': 'WARNING',
-                'propagate': False,
-            },
+        'file': {
+            'level': 'DEBUG',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'log/django.log',
+            'formatter': 'verbose',
         },
-    }
-else:
-    # Security settings
-    # SECURE_SSL_REDIRECT = True
-    # SESSION_COOKIE_SECURE = True
-    # CSRF_COOKIE_SECURE = True
-    # SECURE_BROWSER_XSS_FILTER = True
-    # SECURE_CONTENT_TYPE_NOSNIFF = True
-    # X_FRAME_OPTIONS = 'DENY'
-    # SECURE_HSTS_SECONDS = 31536000
-    # SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    # SECURE_HSTS_PRELOAD = True
-
-    # Email settings
-    # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-    # EMAIL_HOST = env('EMAIL_HOST')
-    # EMAIL_PORT = env('EMAIL_PORT')
-    # EMAIL_HOST_USER = env('EMAIL_HOST_USER')
-    # EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
-    # EMAIL_USE_TLS = True
-    # DEFAULT_FROM_EMAIL = 'your@domain.com'
-
-    # Caching settings
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
-        }
-    }
-
-    # Logging
-    LOGGING = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'verbose': {
-                'format': '{levelname} {asctime} {module} {message}',
-                'style': '{',
-            },
+    },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'DEBUG',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': True,
         },
-        'handlers': {
-            'console': {
-                'level': 'INFO',
-                'class': 'logging.StreamHandler',
-                'stream': sys.stdout,
-                'formatter': 'verbose',
-            },
-        },
-        'root': {
+        'django.db.backends': {
             'handlers': ['console'],
             'level': 'INFO',
+            'propagate': False,
         },
-    }
-
-    # Settings for static files
-    STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
+        'django.utils.autoreload': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+    },
+}
 EOF
 
+# Populate settings/production.py
+cat > config/settings/production.py << EOF
+from .base import *
+
+env.read_env(env_file=BASE_DIR / 'conf/env_vars/production.env')
+SECRET_KEY = env('SECRET_KEY')
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = False
+
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['${project_domain}'])
+
+# Database for production
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        'NAME': env('POSTGRES_DB'),
+        'USER': env('POSTGRES_USER'),
+        'PASSWORD': env('POSTGRES_PASSWORD'),
+        'HOST': env('POSTGRES_HOST', default='localhost'),
+        'PORT': env('POSTGRES_PORT', default='5432'),
+        'AUTOCOMMIT': True,
+    }
+}
+
+# Security settings
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+
+# Email settings
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = env('EMAIL_HOST')
+EMAIL_PORT = env('EMAIL_PORT')
+EMAIL_HOST_USER = env('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
+EMAIL_USE_TLS = True
+DEFAULT_FROM_EMAIL = 'your@domain.com'
+
+# Caching settings
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
+    }
+}
+
+# Logging for production
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'stream': sys.stdout,
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
+
+# Settings for static files
+STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
+EOF
+
+# Extract SECRET_KEY from settings.py and update .env files
+echo -e "\e[90m[INFO]\e[0m Extracting SECRET_KEY from settings.py and updating .env files..."
+SECRET_KEY=$(grep "SECRET_KEY = " config/settings.py | sed "s/SECRET_KEY = ['\"]\(.*\)['\"]/\1/")
+
+# Escape special characters in SECRET_KEY for sed
+SECRET_KEY_ESCAPED=$(echo "$SECRET_KEY" | sed 's/[&/\]/\\&/g')
+
+# Update .env files with SECRET_KEY in quotes
+sed -i "s/^SECRET_KEY=.*/SECRET_KEY='${SECRET_KEY_ESCAPED}'/" "${project_path}/conf/env_vars/local.env"
+sed -i "s/^SECRET_KEY=.*/SECRET_KEY='${SECRET_KEY_ESCAPED}'/" "${project_path}/conf/env_vars/production.env"
+# Remove old settings.py
+rm -f config/settings.py
+
+# Update settings/urls.py
+urls_path=config/urls.py
+sed -i "1,/from django.urls import path/c\from django.contrib import admin\nfrom django.urls import path, include\nfrom django.conf import settings" "${urls_path}"
+echo "" >> "${urls_path}"
+# Add debug toolbar urls settings
+cat >> "${urls_path}" << 'EOF'
+if settings.DEBUG:
+    urlpatterns.append(path('__debug__/', include('debug_toolbar.urls')))
+EOF
+
+# Load environment variables before collecting static files
+echo -e "\e[90m[INFO]\e[0m Loading environment variables from ${environment}.env..."
+export $(grep -v '^#' "${project_path}/conf/env_vars/${environment}.env" | xargs)
+
 # Collect static files
-echo -e "\e[32m[INFO]\e[0m Collecting static files..."
+echo -e "\e[90m[INFO]\e[0m Collecting static files..."
 python manage.py collectstatic --noinput
 
 # Configure Gunicorn
-echo -e "\e[32m[INFO]\e[0m Setting up Gunicorn configuration..."
+echo -e "\e[90m[INFO]\e[0m Setting up Gunicorn configuration..."
 gunicorn_socket="${project_path}/conf/gunicorn/${project_name}.gunicorn.socket"
 gunicorn_service="${project_path}/conf/gunicorn/${project_name}.gunicorn.service"
 
@@ -913,7 +972,7 @@ sudo systemctl start "${project_name}.gunicorn.socket"
 sudo systemctl enable "${project_name}.gunicorn.socket"
 
 # Configure Nginx
-echo -e "\e[32m[INFO]\e[0m Setting up Nginx configuration..."
+echo -e "\e[90m[INFO]\e[0m Setting up Nginx configuration..."
 nginx_conf="${project_path}/conf/nginx/nginx.conf"
 cat <<EOF > "${nginx_conf}"
 worker_processes auto;
@@ -1103,11 +1162,11 @@ fi
 
 # Validate Nginx configuration before restarting
 if sudo nginx -t; then
-    echo -e "\e[32m[INFO]\e[0m Restarting Nginx..."
+    echo -e "\e[90m[INFO]\e[0m Restarting Nginx..."
     sudo systemctl restart nginx
 else
     echo -e "\e[31m[ERROR]\e[0m Nginx configuration test failed!"
     exit 1
 fi
 
-echo -e "\e[32m[INFO]\e[0m Django project setup completed successfully."
+echo -e "\e[32m[SUCCESS]\e[0m Django project initialized, keep up the good work!"

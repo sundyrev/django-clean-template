@@ -34,7 +34,11 @@ project_directory/
     ├── config/
     │   ├── __init__.py
     │   ├── asgi.py
-    │   ├── settings.py
+    │   ├── settings/
+    │   │   ├── __init__.py
+    │   │   ├── base.py
+    │   │   ├── local.py
+    │   │   └── production.py
     │   ├── urls.py
     │   └── wsgi.py
     ├── jinja2/
