@@ -296,11 +296,7 @@ ALLOWED_HOSTS=${project_domain},127.0.0.1
 DJANGO_SETTINGS_MODULE=config.settings.local
 
 # PostgreSQL settings
-POSTGRES_DB=${project_name}_db
-POSTGRES_USER=${project_name}_user
-POSTGRES_PASSWORD=${project_name}_password
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+DATABASE_URL=postgres://${project_name}_user:${project_name}_password@localhost:5432/${project_name}_db
 EOL
 
  # Create production environment file with proper permissions
@@ -312,11 +308,8 @@ ALLOWED_HOSTS=${project_domain}
 DJANGO_SETTINGS_MODULE=config.settings.production
 
 # PostgreSQL settings
-POSTGRES_DB=${project_name}_db
-POSTGRES_USER=${project_name}_user
-POSTGRES_PASSWORD=${project_name}_password
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
+DATABASE_URL=postgres://${project_name}_user:${project_name}_password@postgres:5432/${project_name}_db
+CONN_MAX_AGE=60
 
 # Redis settings
 REDIS_URL=redis://redis:6379/1
@@ -624,11 +617,13 @@ install -m 644 /dev/null config/settings/__init__.py
 install -m 644 /dev/null config/settings/base.py
 install -m 644 /dev/null config/settings/local.py
 install -m 644 /dev/null config/settings/production.py
+install -m 644 /dev/null config/settings/test.py
 
 # Populate settings/base.py
 cat > config/settings/base.py << EOF
 import sys
 from pathlib import Path
+from django.utils.translation import gettext_lazy as _
 import environ
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -636,28 +631,41 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 
 env = environ.Env()
 
-# Application definition
-INSTALLED_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
-    "django.contrib.contenttypes",
-    "django.contrib.sessions",
-    "django.contrib.messages",
-    "django.contrib.staticfiles",
+# Application definition - Lists of apps for Django, third-party, and local use
+DJANGO_APPS = [
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.sites',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+    'django.contrib.admin',
 ]
 
+THIRD_PARTY_APPS = [
+    # 'crispy_forms',
+]
+
+LOCAL_APPS = [
+    # 'apps.blog',
+]
+
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+
+# Middleware configuration - Security and session handling
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = "config.urls"
+ROOT_URLCONF = 'config.urls'
 
+# Template engines - Jinja2 and Django templates configuration
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.jinja2.Jinja2',
@@ -682,32 +690,91 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "config.wsgi.application"
+WSGI_APPLICATION = 'config.wsgi.application'
 
-# Password validation
+# Password validation - Rules for secure passwords
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-# Internationalization
-LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+# Internationalization - Language and timezone settings
+LANGUAGE_CODE = 'en-us'
+TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
+LOCALE_PATHS = [BASE_DIR / '${project_name}/locale']
+LANGUAGES = [
+    ('en', _('English')),
+    # ('ru', _('Russian')),
+]
+
+# Static files (CSS, JavaScript, Images) - Paths and finders
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / '${project_name}/staticfiles'
 STATICFILES_DIRS = [BASE_DIR / '${project_name}/static']
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+]
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / '${project_name}/media'
 
-# Default primary key field type
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+# Security settings - Basic protections against common vulnerabilities
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+
+# Default primary key field type - For database models
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Admin - Contact information for error notifications
+STAFF_ALEXEY = ('Alexey', 'aleksey.sundyrev@gmail.com')
+ADMINS = (STAFF_ALEXEY)
+MANAGERS = ADMINS
+
+# Sites framework - Default site ID for django.contrib.sites
+SITE_ID = 1
+
+# Caching - Base configuration with multiple cache options
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+    },
+    'localmem': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': '',
+    },
+}
+
+# Logging - Basic console logging setup
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'stream': sys.stdout,
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+}
 EOF
 
 # Populate settings/local.py
@@ -722,20 +789,13 @@ DEBUG = True
 
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
-# Database for local development
+# Database - Configuration for local development
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': env('POSTGRES_DB'),
-        'USER': env('POSTGRES_USER'),
-        'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST', default='localhost'),
-        'PORT': env('POSTGRES_PORT', default='5432'),
-        'AUTOCOMMIT': True,
-    }
+    'default': env.db('DATABASE_URL', default='postgres:///testapp'),
 }
+DATABASES['default']['ATOMIC_REQUESTS'] = True
 
-# Development tools
+# Development tools - Debugging and extension utilities
 INTERNAL_IPS = ['127.0.0.1']
 
 INSTALLED_APPS += [
@@ -747,17 +807,22 @@ MIDDLEWARE += [
     'debug_toolbar.middleware.DebugToolbarMiddleware',
 ]
 
-# Email settings for development
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-
-# Disabling caching
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
-    }
+DEBUG_TOOLBAR_CONFIG = {
+    'SHOW_TEMPLATE_CONTEXT': True,
+    'DISABLE_PANELS': [
+        'debug_toolbar.panels.redirects.RedirectsPanel',
+        'debug_toolbar.panels.profiling.ProfilingPanel',
+    ],
 }
 
-# Logging for development
+# Email settings - Console output for development
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Caching - Using 'default' from base.py (DummyCache)
+# Uncomment this line to use LocMemCache for local development
+# CACHES = {'default': CACHES['localmem']}
+
+# Logging - Detailed logging for development debugging
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -821,31 +886,28 @@ DEBUG = False
 
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['${project_domain}'])
 
-# Database for production
+# Database - Configuration for production with persistent connections
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': env('POSTGRES_DB'),
-        'USER': env('POSTGRES_USER'),
-        'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST', default='localhost'),
-        'PORT': env('POSTGRES_PORT', default='5432'),
-        'AUTOCOMMIT': True,
-    }
+    'default': env.db('DATABASE_URL'),
 }
+DATABASES['default']['ATOMIC_REQUESTS'] = True
+DATABASES['default']['CONN_MAX_AGE'] = env.int('CONN_MAX_AGE', default=60)
 
-# Security settings
+# Security settings - Enhanced protections for production
 SECURE_SSL_REDIRECT = True
 SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_NAME = '__Secure-sessionid'
 CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_NAME = '__Secure-csrftoken'
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-SECURE_HSTS_PRELOAD = True
+SECURE_HSTS_PRELOAD = env.bool('DJANGO_SECURE_HSTS_PRELOAD', default=True)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
-# Email settings
+# Email settings - SMTP configuration for production
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = env('EMAIL_HOST')
 EMAIL_PORT = env('EMAIL_PORT')
@@ -854,18 +916,22 @@ EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
 EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = 'your@domain.com'
 
-# Caching settings
+# Caching - Redis configuration for performance
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
         'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
+        'OPTIONS': {
+            'IGNORE_EXCEPTIONS': True,
+        },
     }
 }
 
-# Logging for production
+# Logging - Production logging with error notifications
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {'require_debug_false': {'()': 'django.utils.log.RequireDebugFalse'}},
     'formatters': {
         'verbose': {
             'format': '{levelname} {asctime} {module} {message}',
@@ -879,15 +945,40 @@ LOGGING = {
             'stream': sys.stdout,
             'formatter': 'verbose',
         },
+        'mail_admins': {
+            'level': 'ERROR',
+            'filters': ['require_debug_false'],
+            'class': 'django.utils.log.AdminEmailHandler',
+        },
     },
     'root': {
         'handlers': ['console'],
         'level': 'INFO',
     },
+    'loggers': {
+        'django.request': {
+            'handlers': ['mail_admins'],
+            'level': 'ERROR',
+            'propagate': True,
+        },
+    },
 }
 
-# Settings for static files
+# Static files - Storage configuration for production
 STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
+EOF
+
+# Populate settings/test.py
+cat > config/settings/test.py << EOF
+from .base import *
+
+SECRET_KEY = env('SECRET_KEY')
+TEST_RUNNER = 'django.test.runner.DiscoverRunner'
+PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+CACHES = {
+    'default': CACHES['localmem'],  # Use LocMemCache from base.py for testing
+}
 EOF
 
 # Extract SECRET_KEY from settings.py and update .env files

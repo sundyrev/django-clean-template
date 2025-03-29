@@ -11,12 +11,12 @@ if [[ -z "${project_path}" ]]; then
 fi
 
 if [[ ! -d "${project_path}" ]]; then
-    echo -e "\e[31m[ERROR]\e[0m Project directory not found at ${project_path}."
+    echo -e "\e[31m[ERROR]\e[0m Project directory not found at \e[33m\"${project_path}\"\e[0m."
     exit 1
 fi
 
-echo -e "\e[32m[INFO]\e[0m Stopping Django development server (if running)..."
+echo -e "\e[90m[INFO]\e[0m Stopping Django development server (if running)..."
 pkill -f "manage.py runserver"
 
-echo -e "\e[32m[INFO]\e[0m Starting Gunicorn..."
+echo -e "\e[90m[INFO]\e[0m Starting Gunicorn..."
 sudo systemctl start "${project_name}.gunicorn.service"
