@@ -63,59 +63,54 @@ mkdir -m 755 -p \
 echo -e "\e[90m[INFO]\e[0m Creating requirements files..."
 cat > "${project_path}/${project_name}/requirements/base.in" << EOL
 # Main framework
-Django>=5.0,<5.1
+Django>=5.0,<5.1  # https://www.djangoproject.com/
 
 # PostgreSQL driver
-psycopg2-binary>=2.9.0
+psycopg[c]>=3.2.6  # https://github.com/psycopg/psycopg (supports C bindings for performance)
 
 # Environment variables management
-django-environ>=0.11.2
-
-# Templating
-Jinja2>=3.1.0
+django-environ>=0.12.0  # https://github.com/joke2k/django-environ
 
 # WSGI server
-gunicorn>=20.1.0
+gunicorn>=23.0.0  # https://github.com/benoitc/gunicorn
 EOL
 
 cat > "${project_path}/${project_name}/requirements/local.in" << EOL
 -r base.in
 
 # Development tools
-ipython>=8.0.0
-django-debug-toolbar>=4.0.0
-django-extensions>=3.2.0
+ipython>=8.14.0  # https://github.com/ipython/ipython
+django-debug-toolbar>=5.1.0  # https://github.com/jazzband/django-debug-toolbar
+django-extensions>=3.2.3  # https://github.com/django-extensions/django-extensions
 
 # Code quality
-flake8>=6.0.0
-black>=23.0.0
-isort>=5.12.0
-mypy>=1.0.0
+ruff>=0.11.2  # https://github.com/astral-sh/ruff (modern linter and formatter)
+coverage>=7.7.1  # https://github.com/nedbat/coveragepy (test coverage)
+mypy>=1.15.0  # https://github.com/python/mypy (static type checking)
+django-stubs>=5.1.3  # https://github.com/typeddjango/django-stubs (type hints for Django)
 
 # Testing
-pytest>=7.0.0
-pytest-django>=4.5.0
-pytest-cov>=4.0.0
-factory_boy>=3.2.0
-Faker>=18.0.0
+pytest>=8.3.5  # https://github.com/pytest-dev/pytest
+pytest-django>=4.10.0  # https://github.com/pytest-dev/pytest-django
+factory-boy>=3.3.2  # https://github.com/FactoryBoy/factory_boy (fixtures for testing)
 EOL
 
 cat > "${project_path}/${project_name}/requirements/production.in" << EOL
 -r base.in
 
 # Security
-django-security>=0.12.0
-django-axes>=6.0.0
-
-# Monitoring
-sentry-sdk>=1.0.0
+django-allauth[mfa]>=65.4.1  # https://github.com/pennersr/django-allauth (authentication)
+argon2-cffi>=23.1.0  # https://github.com/hynek/argon2_cffi (password hashing)
 
 # Caching
-django-redis>=5.2.0
+django-redis>=5.4.0  # https://github.com/jazzband/django-redis (Redis caching)
 
 # Performance
-django-storages>=1.13.0
-whitenoise>=6.4.0
+django-storages[s3]>=1.14.5  # https://github.com/jschneier/django-storages (S3 storage)
+whitenoise>=6.8.0  # https://github.com/evansd/whitenoise (static file serving)
+
+# Monitoring
+sentry-sdk>=2.0.0  # https://github.com/getsentry/sentry-python (error tracking)
 EOL
 
 # Create log files with proper permissions
@@ -1103,6 +1098,10 @@ http {
 }
 EOF
 chmod 644 "${nginx_conf}"
+sudo cp "${nginx_conf}" /etc/nginx/nginx.conf
+sudo chmod 644 /etc/nginx/nginx.conf
+sudo mkdir -p /var/cache/nginx
+sudo chown www-data:www-data /var/cache/nginx
 
 project_nginx_conf="${project_path}/conf/nginx/${project_name}.conf"
 cat <<EOF > "${project_nginx_conf}"
