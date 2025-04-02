@@ -366,10 +366,10 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Virtual Environment
-.env
 env/
 venv/
 .venv/
+*.env
 .python-version
 
 # Django
@@ -388,14 +388,12 @@ db.sqlite3-journal
 # Media and Static files
 media/
 staticfiles/
-static/
-!static/.gitkeep
+!static/
 
 # Docker
 docker-compose*.yml
-.docker/
-docker/
 *.env
+!docker-compose.yml
 
 # IDE
 .idea/
@@ -437,12 +435,10 @@ requirements/*.txt
 !requirements/local.txt
 !requirements/production.txt
 
-# Logs
-log/*.log
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Entire directories
+conf/
+env/
+log/
 
 # Jinja2
 jinja2/*.pyc
@@ -1035,12 +1031,12 @@ User=${USER}
 Group=www-data
 WorkingDirectory=${project_path}/${project_name}
 EnvironmentFile=${project_path}/conf/env_vars/${environment}.env
-ExecStart=${project_path}/env/bin/gunicorn \
-    --access-logfile ${project_path}/log/gunicorn.log \
-    --error-logfile ${project_path}/log/gunicorn.log \
-    --capture-output \
-    --workers 3 \
-    --bind unix:/run/${project_name}.gunicorn.sock \
+ExecStart=${project_path}/env/bin/gunicorn \\
+    --access-logfile ${project_path}/log/gunicorn.log \\
+    --error-logfile ${project_path}/log/gunicorn.log \\
+    --capture-output \\
+    --workers 3 \\
+    --bind unix:/run/${project_name}.gunicorn.sock \\
     config.wsgi:application
 
 [Install]
