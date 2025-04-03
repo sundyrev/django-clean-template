@@ -30,40 +30,93 @@ if [[ "${project_path}" == "${script_dir}" ]]; then
 fi
 
 echo -e "\e[90m[INFO]\e[0m Stopping the Gunicorn socket..."
-sudo systemctl stop "${project_name}.gunicorn.socket" &>/dev/null
+if systemctl --quiet is-active "${project_name}.gunicorn.socket"; then
+    sudo systemctl stop "${project_name}.gunicorn.socket"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to stop Gunicorn socket."
+        exit 1
+    fi
+else
+    echo -e "\e[93m[WARNING]\e[0m Gunicorn socket is not active, skipping stop."
+fi
 
 echo -e "\e[90m[INFO]\e[0m Stopping the Gunicorn service..."
-sudo systemctl stop "${project_name}.gunicorn.service" &>/dev/null
+if systemctl --quiet is-active "${project_name}.gunicorn.service"; then
+    sudo systemctl stop "${project_name}.gunicorn.service"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to stop Gunicorn service."
+        exit 1
+    fi
+else
+    echo -e "\e[93m[WARNING]\e[0m Gunicorn service is not active, skipping stop."
+fi
 
 echo -e "\e[90m[INFO]\e[0m Disabling the Gunicorn service and socket..."
-sudo systemctl disable "${project_name}.gunicorn.service" &>/dev/null
-sudo systemctl disable "${project_name}.gunicorn.socket" &>/dev/null
-
-# Remove systemd only if this service exists
-if systemctl list-units --full --all | grep -q "${project_name}.gunicorn.service"; then
-    echo -e "\e[90m[INFO]\e[0m Removing Gunicorn service and socket files..."
-    sudo rm -f "/etc/systemd/system/${project_name}.gunicorn.service"
-    sudo rm -f "/etc/systemd/system/${project_name}.gunicorn.socket"
+if systemctl list-unit-files | grep -q "${project_name}.gunicorn.service"; then
+    sudo systemctl disable "${project_name}.gunicorn.service" > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to disable Gunicorn service."
+        exit 1
+    fi
 fi
+if systemctl list-unit-files | grep -q "${project_name}.gunicorn.socket"; then
+    sudo systemctl disable "${project_name}.gunicorn.socket" > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to disable Gunicorn socket."
+        exit 1
+    fi
+fi
+
+echo -e "\e[90m[INFO]\e[0m Removing Gunicorn service and socket files..."
+for file in "/etc/systemd/system/${project_name}.gunicorn.service" "/etc/systemd/system/${project_name}.gunicorn.socket"; do
+    if [[ -f "$file" ]]; then
+        sudo rm -f "$file"
+        if [ $? -ne 0 ]; then
+            echo -e "\e[31m[ERROR]\e[0m Failed to remove $file."
+            exit 1
+        fi
+    fi
+done
 
 echo -e "\e[90m[INFO]\e[0m Reloading systemd to refresh the configuration..."
-sudo systemctl daemon-reload &>/dev/null
-
-echo -e "\e[90m[INFO]\e[0m Removing Nginx configuration..."
-# Remove only the configuration of the current project
-nginx_config="/etc/nginx/sites-enabled/${project_name}.conf"
-if [[ -f "${nginx_config}" ]]; then
-    sudo rm "${nginx_config}" &>/dev/null
+sudo systemctl daemon-reload
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to reload systemd daemon."
+    exit 1
 fi
 
-# Reload nginx after removing configs
-sudo systemctl reload nginx &>/dev/null
+echo -e "\e[90m[INFO]\e[0m Removing Nginx configuration..."
+nginx_config="/etc/nginx/sites-enabled/${project_name}.conf"
+if [[ -f "${nginx_config}" ]]; then
+    sudo rm -f "${nginx_config}"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to remove Nginx configuration ${nginx_config}."
+        exit 1
+    fi
+    echo -e "\e[90m[INFO]\e[0m Reloading Nginx after configuration removal..."
+    if sudo nginx -t &>/dev/null; then
+        sudo systemctl reload nginx
+        if [ $? -ne 0 ]; then
+            echo -e "\e[31m[ERROR]\e[0m Failed to reload Nginx service."
+            exit 1
+        fi
+    else
+        echo -e "\e[31m[ERROR]\e[0m Nginx configuration test failed after removal."
+        exit 1
+    fi
+else
+    echo -e "\e[93m[WARNING]\e[0m No Nginx configuration found at ${nginx_config}, skipping removal."
+fi
 
 if [[ -d "${project_path}" ]]; then
     echo -e "\e[90m[INFO]\e[0m Deleting the project folder \e[33m${project_path}\e[0m..."
     sudo rm -rf "${project_path}"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to delete project folder \"${project_path}\"."
+        exit 1
+    fi
 else
-    echo -e "\e[31m[ERROR]\e[0m Project folder \"${project_path}\" does not exist."
+    echo -e "\e[93m[WARNING]\e[0m Project folder \"${project_path}\" does not exist, skipping deletion."
 fi
 
 echo -e "\e[32m[SUCCESS]\e[0m The project has been successfully deleted!"

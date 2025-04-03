@@ -46,8 +46,18 @@ base_python_interpreter=${base_python_interpreter:-${default_python_interpreter}
 
 # Install necessary packages
 echo -e "\e[90m[INFO]\e[0m Installing necessary packages..."
+set +e
 sudo apt update && sudo apt upgrade -y
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to update or upgrade packages."
+    exit 1
+fi
+set -e
 sudo apt install -y python3-pip python3-dev libpq-dev postgresql postgresql-contrib nginx curl
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to install required packages."
+    exit 1
+fi
 
 # Create the directory structure
 echo -e "\e[90m[INFO]\e[0m Creating project directory structure..."
@@ -138,6 +148,7 @@ services:
       - conf/env_vars/production.env
     depends_on:
       - postgres
+      - redis
     networks:
       - backend
     restart: unless-stopped
@@ -173,6 +184,15 @@ services:
       - backend
     restart: unless-stopped
 
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+    restart: unless-stopped
+
 volumes:
   postgres_data:
     name: ${project_name}_postgres_data
@@ -188,6 +208,13 @@ install -m 664 /dev/null "${project_path}/docker/Dockerfile.django"
 cat > "${project_path}/docker/Dockerfile.django" << EOL
 # Stage 1: Base build stage
 FROM python:3.11-slim AS builder
+
+# Install build dependencies for psycopg-c
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    gcc \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create the app directory
 RUN mkdir /app
@@ -207,6 +234,11 @@ FROM python:3.11-slim
 # Set environment variables to optimize Python
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+
+# Install runtime dependencies for psycopg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user
 RUN groupadd -r app-user && useradd -r -g app-user -u 1000 app-user
@@ -269,13 +301,13 @@ echo "Collecting static files..."
 python ${project_name}/manage.py collectstatic --noinput
 
 echo "Starting Gunicorn..."
-exec gunicorn --chdir ${project_name} config.wsgi:application \
-    --bind 0.0.0.0:8000 \
-    --workers 3 \
-    --timeout 120 \
-    --max-requests 1000 \
-    --access-logfile - \
-    --error-logfile - \
+exec gunicorn --chdir ${project_name} config.wsgi:application \\
+    --bind 0.0.0.0:8000 \\
+    --workers 3 \\
+    --timeout 120 \\
+    --max-requests 1000 \\
+    --access-logfile - \\
+    --error-logfile - \\
     --log-level info
 EOL
 
@@ -318,6 +350,8 @@ EOL
 
 # Create PostgreSQL user and database
 echo -e "\e[90m[INFO]\e[0m Creating PostgreSQL user and database..."
+
+# Create user using PL/pgSQL
 sudo -u postgres psql -q <<EOF
 DO \$\$
 BEGIN
@@ -330,16 +364,31 @@ BEGIN
     ELSE
         RAISE NOTICE 'User ${project_name}_user already exists. Skipping creation and settings.';
     END IF;
-    
-    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '${project_name}_db') THEN
-        CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;
-        GRANT ALL PRIVILEGES ON DATABASE ${project_name}_db TO ${project_name}_user;
-        RAISE NOTICE 'Database ${project_name}_db created with privileges.';
-    ELSE
-        RAISE NOTICE 'Database ${project_name}_db already exists. Skipping creation and privileges.';
-    END IF;
 END \$\$;
 EOF
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to create PostgreSQL user ${project_name}_user."
+    exit 1
+fi
+
+# Check if the database exists and create it if it doesn't
+if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw "${project_name}_db"; then
+    sudo -u postgres psql -q -c "CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to create database ${project_name}_db."
+        exit 1
+    fi
+    echo -e "\e[90m[INFO]\e[0m Database ${project_name}_db created with privileges."
+else
+    echo -e "\e[93m[WARNING]\e[0m Database ${project_name}_db already exists. Skipping creation."
+fi
+
+# Grant privileges
+sudo -u postgres psql -q -c "GRANT ALL PRIVILEGES ON DATABASE ${project_name}_db TO ${project_name}_user;"
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to grant privileges on database ${project_name}_db."
+    exit 1
+fi
 
 # Create .gitignore file
 install -m 644 /dev/null "${project_path}/.gitignore"
@@ -554,6 +603,10 @@ EOL
 echo -e "\e[90m[INFO]\e[0m Setting up Python virtual environment..."
 cd "${project_path}"
 ${base_python_interpreter} -m venv env
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to create virtual environment."
+    exit 1
+fi
 
 # Add DJANGO_SETTINGS_MODULE to the virtual environment's activate script
 echo -e "\e[90m[INFO]\e[0m Adding DJANGO_SETTINGS_MODULE to activate script..."
@@ -563,21 +616,50 @@ source env/bin/activate
 # Upgrade pip and install pip-tools
 echo -e "\e[90m[INFO]\e[0m Upgrading pip and installing pip-tools..."
 pip install --upgrade pip
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to upgrade pip."
+    exit 1
+fi
 pip install pip-tools
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to install pip-tools."
+    exit 1
+fi
 
 # Compile requirements files
 echo -e "\e[90m[INFO]\e[0m Compiling requirements files..."
+
 pip-compile ${project_name}/requirements/base.in --no-strip-extras --output-file ${project_name}/requirements/base.txt
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to compile base.txt requirements."
+    exit 1
+fi
 pip-compile ${project_name}/requirements/local.in --no-strip-extras --output-file ${project_name}/requirements/local.txt
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to compile local.txt requirements."
+    exit 1
+fi
 pip-compile ${project_name}/requirements/production.in --no-strip-extras --output-file ${project_name}/requirements/production.txt
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to compile production.txt requirements."
+    exit 1
+fi
 
 # Install dependencies based on environment
 echo -e "\e[90m[INFO]\e[0m Installing ${environment} dependencies..."
 pip-sync ${project_name}/requirements/${environment}.txt
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to install ${environment} dependencies."
+    exit 1
+fi
 
 # Create Django project
 echo -e "\e[90m[INFO]\e[0m Creating Django project..."
 django-admin startproject config "${project_name}"
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to create Django project."
+    exit 1
+fi
 cd "${project_name}"
 
 # Create applications directory
@@ -586,7 +668,6 @@ touch apps/__init__.py
 
 # Create Jinja2 environment configuration
 echo -e "\e[90m[INFO]\e[0m Creating Jinja2 environment configuration..."
-mkdir -m 755 -p config
 cat <<EOF > config/jinja2.py
 from django.templatetags.static import static
 from django.urls import reverse
@@ -972,18 +1053,36 @@ CACHES = {
 }
 EOF
 
-# Extract SECRET_KEY from settings.py and update .env files
-echo -e "\e[90m[INFO]\e[0m Extracting SECRET_KEY from settings.py and updating .env files..."
-SECRET_KEY=$(grep "SECRET_KEY = " config/settings.py | sed "s/SECRET_KEY = ['\"]\(.*\)['\"]/\1/")
+# Remove the original settings.py as it’s no longer needed
+echo -e "\e[90m[INFO]\e[0m Removing original settings.py..."
+if [ -f config/settings.py ]; then
+    rm -f config/settings.py
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to remove original settings.py."
+        exit 1
+    fi
+else
+    echo -e "\e[93m[WARNING]\e[0m Original settings.py not found, skipping removal."
+fi
+
+# Generate a secure SECRET_KEY and update .env files
+echo -e "\e[90m[INFO]\e[0m Generating a secure SECRET_KEY and updating .env files..."
+SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(50))")
 
 # Escape special characters in SECRET_KEY for sed
 SECRET_KEY_ESCAPED=$(echo "$SECRET_KEY" | sed 's/[&/\]/\\&/g')
 
-# Update .env files with SECRET_KEY in quotes
+# Update .env .env files with the new SECRET_KEY in quotes
 sed -i "s/^SECRET_KEY=.*/SECRET_KEY='${SECRET_KEY_ESCAPED}'/" "${project_path}/conf/env_vars/local.env"
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to update SECRET_KEY in local.env."
+    exit 1
+fi
 sed -i "s/^SECRET_KEY=.*/SECRET_KEY='${SECRET_KEY_ESCAPED}'/" "${project_path}/conf/env_vars/production.env"
-# Remove old settings.py
-rm -f config/settings.py
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to update SECRET_KEY in production.env."
+    exit 1
+fi
 
 # Update settings/urls.py
 urls_path=config/urls.py
@@ -1002,6 +1101,10 @@ export $(grep -v '^#' "${project_path}/conf/env_vars/${environment}.env" | xargs
 # Collect static files
 echo -e "\e[90m[INFO]\e[0m Collecting static files..."
 python manage.py collectstatic --noinput
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to collect static files."
+    exit 1
+fi
 
 # Configure Gunicorn
 echo -e "\e[90m[INFO]\e[0m Setting up Gunicorn configuration..."
@@ -1045,12 +1148,35 @@ EOF
 chmod 644 "${gunicorn_service}"
 
 sudo ln -s "${gunicorn_service}" "/etc/systemd/system/${project_name}.gunicorn.service"
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to create symlink for Gunicorn service."
+    exit 1
+fi
 sudo ln -s "${gunicorn_socket}" "/etc/systemd/system/${project_name}.gunicorn.socket"
-sudo systemctl daemon-reload 
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to create symlink for Gunicorn socket."
+    exit 1
+fi
+sudo systemctl daemon-reload
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to reload systemd daemon."
+    exit 1
+fi
 
+# Start and enable Gunicorn service with status check
 sudo systemctl start "${project_name}.gunicorn.service"
+if ! sudo systemctl is-active "${project_name}.gunicorn.service" > /dev/null; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to start Gunicorn service."
+    exit 1
+fi
 sudo systemctl enable "${project_name}.gunicorn.service"
+
+# Start and enable Gunicorn socket with status check
 sudo systemctl start "${project_name}.gunicorn.socket"
+if ! sudo systemctl is-active "${project_name}.gunicorn.socket" > /dev/null; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to start Gunicorn socket."
+    exit 1
+fi
 sudo systemctl enable "${project_name}.gunicorn.socket"
 
 # Configure Nginx
@@ -1095,6 +1221,10 @@ http {
 EOF
 chmod 644 "${nginx_conf}"
 sudo cp "${nginx_conf}" /etc/nginx/nginx.conf
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to copy Nginx configuration."
+    exit 1
+fi
 sudo chmod 644 /etc/nginx/nginx.conf
 sudo mkdir -p /var/cache/nginx
 sudo chown www-data:www-data /var/cache/nginx
@@ -1240,16 +1370,28 @@ echo -e "[Service]\nPIDFile=/var/cache/nginx/nginx.pid" | sudo tee /etc/systemd/
 
 # Reload systemd to apply changes
 sudo systemctl daemon-reload
+if [ $? -ne 0 ]; then
+    echo -e "\e[31m[ERROR]\e[0m Failed to reload systemd daemon for Nginx."
+    exit 1
+fi
 
 # Create a symbolic link for Nginx configuration
 if [[ ! -f "/etc/nginx/sites-enabled/${project_name}.conf" ]]; then
     sudo ln -sf "${project_nginx_conf}" "/etc/nginx/sites-enabled/${project_name}.conf"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to create symbolic link for Nginx configuration."
+        exit 1
+    fi
 fi
 
 # Validate Nginx configuration before restarting
 if sudo nginx -t; then
     echo -e "\e[90m[INFO]\e[0m Restarting Nginx..."
     sudo systemctl restart nginx
+    if ! sudo systemctl is-active nginx > /dev/null; then
+        echo -e "\e[31m[ERROR]\e[0m Failed to restart Nginx service."
+        exit 1
+    fi
 else
     echo -e "\e[31m[ERROR]\e[0m Nginx configuration test failed!"
     exit 1
