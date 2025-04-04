@@ -3,29 +3,27 @@ set -e
 
 # Check if pyenv is installed
 if ! command -v pyenv &> /dev/null; then
-    echo -e "\e[31m[ERROR]\e[0m pyenv is not installed. Please install it before proceeding."
+    echo -e "\e[38;5;196m[ERROR]\e[0m pyenv is not installed. Please install it before proceeding."
     exit 1
 fi
 
 # Variables
-default_python_interpreter=$(which python3)
 project_domain=""
 project_path=$(dirname "$(realpath "$0")")
 project_name=""
 environment=""
 
 # Prompt for user input
-read -e -p $'\e[90m[1/4]\e[0m Python interpreter \e[33m(default: '"${default_python_interpreter}"$')\e[0m: ' base_python_interpreter
-read -e -p $'\e[90m[2/4]\e[0m Your domain without protocol \e[33m(e.g., example.com)\e[0m: ' project_domain
-read -e -p $'\e[90m[3/4]\e[0m Project name: ' project_name
+read -e -p $'\e[38;5;117m[1/3]\e[0m Your domain without protocol \e[38;5;223m(e.g., example.com)\e[0m: ' project_domain
+read -e -p $'\e[38;5;117m[2/3]\e[0m Project name: ' project_name
 
 # Environment selection with validation
-echo -e "\e[90m[4/4]\e[0m Select environment:"
-echo $'\e[95m1\e[0m - Development'
-echo $'\e[95m2\e[0m - Production'
+echo -e "\e[38;5;117m[3/3]\e[0m Select environment:"
+echo $'\e[38;5;207m1\e[0m - Development'
+echo $'\e[38;5;207m2\e[0m - Production'
 
 while true; do
-    read -e -p $'Choose from \e[95m[1/2]\e[0m: ' env_choice
+    read -e -p $'Choose from \e[38;5;207m[1/2]\e[0m: ' env_choice
     case "$env_choice" in
         1|"")
             environment="local"
@@ -36,31 +34,28 @@ while true; do
             break
             ;;
         *)
-            echo -e "\e[91m[ERROR]\e[0m Invalid choice. Please enter \e[95m1\e[0m or \e[95m2\e[0m."
+            echo -e "\e[91m[ERROR]\e[0m Invalid choice. Please enter \e[38;5;117m1\e[0m or \e[38;5;117m2\e[0m."
             ;;
     esac
 done
 
-# Set defaults if not provided
-base_python_interpreter=${base_python_interpreter:-${default_python_interpreter}}
-
 # Install necessary packages
-echo -e "\e[90m[INFO]\e[0m Installing necessary packages..."
+echo -e "\e[38;5;72m[INFO]\e[0m Installing necessary packages..."
 set +e
 sudo apt update && sudo apt upgrade -y
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to update or upgrade packages."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to update or upgrade packages."
     exit 1
 fi
 set -e
 sudo apt install -y python3-pip python3-dev libpq-dev postgresql postgresql-contrib nginx curl
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to install required packages."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install required packages."
     exit 1
 fi
 
 # Create the directory structure
-echo -e "\e[90m[INFO]\e[0m Creating project directory structure..."
+echo -e "\e[38;5;72m[INFO]\e[0m Creating project directory structure..."
 mkdir -m 755 -p \
     "${project_path}/docker" \
     "${project_path}/log/nginx" \
@@ -70,7 +65,7 @@ mkdir -m 755 -p \
     "${project_path}/${project_name}/media/uploads"
 
 # Create requirements directory and base files
-echo -e "\e[90m[INFO]\e[0m Creating requirements files..."
+echo -e "\e[38;5;72m[INFO]\e[0m Creating requirements files..."
 cat > "${project_path}/${project_name}/requirements/base.in" << EOL
 # Main framework
 Django>=5.0,<5.1  # https://www.djangoproject.com/
@@ -83,6 +78,9 @@ django-environ>=0.12.0  # https://github.com/joke2k/django-environ
 
 # WSGI server
 gunicorn>=23.0.0  # https://github.com/benoitc/gunicorn
+
+# Templating
+jinja2>=3.1.2  # https://github.com/pallets/jinja (Jinja2 templating engine)
 EOL
 
 cat > "${project_path}/${project_name}/requirements/local.in" << EOL
@@ -130,7 +128,7 @@ sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/guni
 sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/django.log"
 
 # Create Docker files
-echo -e "\e[90m[INFO]\e[0m Creating Docker configuration files..."
+echo -e "\e[38;5;72m[INFO]\e[0m Creating Docker configuration files..."
 install -m 664 /dev/null "${project_path}/docker-compose.yml"
 cat > "${project_path}/docker-compose.yml" << EOL
 services:
@@ -209,31 +207,29 @@ cat > "${project_path}/docker/Dockerfile.django" << EOL
 # Stage 1: Base build stage
 FROM python:3.11-slim AS builder
 
-# Install build dependencies for psycopg-c
+# Install build dependencies for psycopg[c] and uv
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
     libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create the app directory
-RUN mkdir /app
-
 # Set the working directory
 WORKDIR /app
 
-COPY ${project_name}/requirements/base.txt ${project_name}/requirements/production.txt /app/${project_name}/requirements/
+# Copy the project directory
+COPY ${project_name} /app/${project_name}/
 
-# Install dependencies first for caching benefits
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /app/${project_name}/requirements/production.txt
+# Install uv and dependencies using uv directly to system Python
+RUN pip install --no-cache-dir uv && \
+    uv pip install --system --no-cache-dir -r /app/${project_name}/requirements/production.txt
 
 # Stage 2: Production stage
 FROM python:3.11-slim
 
 # Set environment variables to optimize Python
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 # Install runtime dependencies for psycopg
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -246,18 +242,17 @@ RUN groupadd -r app-user && useradd -r -g app-user -u 1000 app-user
 # Set the working directory
 WORKDIR /app
 
-# Copy the Python dependencies from the builder stage
+# Copy installed dependencies and binaries from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY --from=builder /app /app
 
+# Copy entrypoint script
 COPY docker/entrypoint.sh /entrypoint.sh
-# Make entry file executable
 RUN chmod +x /entrypoint.sh
 
+# Set ownership and switch to non-root user
 RUN chown -R app-user:app-user /app
-
-# Switch to non-root user
 USER app-user
 
 # Start the application using Gunicorn
@@ -290,7 +285,7 @@ USER nginx
 EXPOSE 80 443
 EOL
 
-install -m 664 /dev/null "${project_path}/docker/entrypoint.sh"
+install -m 755 /dev/null "${project_path}/docker/entrypoint.sh"
 cat > "${project_path}/docker/entrypoint.sh" << EOL
 #!/bin/sh
 
@@ -312,7 +307,7 @@ exec gunicorn --chdir ${project_name} config.wsgi:application \\
 EOL
 
 # Configure environment variables
-echo -e "\e[90m[INFO]\e[0m Configuring environment variables..."
+echo -e "\e[38;5;72m[INFO]\e[0m Configuring environment variables..."
 
 # Create local environment file with proper permissions
 install -m 644 /dev/null "${project_path}/conf/env_vars/local.env"
@@ -349,7 +344,7 @@ EMAIL_HOST_PASSWORD=your-email-password
 EOL
 
 # Create PostgreSQL user and database
-echo -e "\e[90m[INFO]\e[0m Creating PostgreSQL user and database..."
+echo -e "\e[38;5;72m[INFO]\e[0m Creating PostgreSQL user and database..."
 
 # Create user using PL/pgSQL
 sudo -u postgres psql -q <<EOF
@@ -367,7 +362,7 @@ BEGIN
 END \$\$;
 EOF
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to create PostgreSQL user ${project_name}_user."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create PostgreSQL user ${project_name}_user."
     exit 1
 fi
 
@@ -375,18 +370,18 @@ fi
 if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw "${project_name}_db"; then
     sudo -u postgres psql -q -c "CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;"
     if [ $? -ne 0 ]; then
-        echo -e "\e[31m[ERROR]\e[0m Failed to create database ${project_name}_db."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create database ${project_name}_db."
         exit 1
     fi
-    echo -e "\e[90m[INFO]\e[0m Database ${project_name}_db created with privileges."
+    echo -e "\e[38;5;72m[INFO]\e[0m Database ${project_name}_db created with privileges."
 else
-    echo -e "\e[93m[WARNING]\e[0m Database ${project_name}_db already exists. Skipping creation."
+    echo -e "\e[38;5;208m[WARNING]\e[0m Database ${project_name}_db already exists. Skipping creation."
 fi
 
 # Grant privileges
 sudo -u postgres psql -q -c "GRANT ALL PRIVILEGES ON DATABASE ${project_name}_db TO ${project_name}_user;"
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to grant privileges on database ${project_name}_db."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to grant privileges on database ${project_name}_db."
     exit 1
 fi
 
@@ -599,75 +594,80 @@ conf/env_vars/*.env
 *.tmp
 EOL
 
+# Check if uv is installed, install it if not
+if ! command -v uv &> /dev/null; then
+    echo -e "\e[38;5;72m[INFO]\e[0m Installing uv..."
+    python3 -m pip install uv
+    if [ $? -ne 0 ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install uv."
+        exit 1
+    fi
+fi
+
 # Set up Python virtual environment
-echo -e "\e[90m[INFO]\e[0m Setting up Python virtual environment..."
+echo -e "\e[38;5;72m[INFO]\e[0m Setting up Python virtual environment..."
 cd "${project_path}"
-${base_python_interpreter} -m venv env
+uv venv env
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to create virtual environment."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create virtual environment."
     exit 1
 fi
 
 # Add DJANGO_SETTINGS_MODULE to the virtual environment's activate script
-echo -e "\e[90m[INFO]\e[0m Adding DJANGO_SETTINGS_MODULE to activate script..."
+echo -e "\e[38;5;72m[INFO]\e[0m Adding DJANGO_SETTINGS_MODULE to activate script..."
 echo "export DJANGO_SETTINGS_MODULE=config.settings.${environment}" >> "${project_path}/env/bin/activate"
 source env/bin/activate
 
-# Upgrade pip and install pip-tools
-echo -e "\e[90m[INFO]\e[0m Upgrading pip and installing pip-tools..."
+# Upgrade pip
+echo -e "\e[38;5;72m[INFO]\e[0m Upgrading pip..."
 pip install --upgrade pip
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to upgrade pip."
-    exit 1
-fi
-pip install pip-tools
-if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to install pip-tools."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to upgrade pip."
     exit 1
 fi
 
 # Compile requirements files
-echo -e "\e[90m[INFO]\e[0m Compiling requirements files..."
+echo -e "\e[38;5;72m[INFO]\e[0m Compiling requirements files..."
 
-pip-compile ${project_name}/requirements/base.in --no-strip-extras --output-file ${project_name}/requirements/base.txt
+uv pip compile ${project_name}/requirements/base.in --no-emit-options --output-file ${project_name}/requirements/base.txt
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to compile base.txt requirements."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile base.txt requirements."
     exit 1
 fi
-pip-compile ${project_name}/requirements/local.in --no-strip-extras --output-file ${project_name}/requirements/local.txt
+uv pip compile ${project_name}/requirements/local.in --no-emit-options --output-file ${project_name}/requirements/local.txt
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to compile local.txt requirements."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile local.txt requirements."
     exit 1
 fi
-pip-compile ${project_name}/requirements/production.in --no-strip-extras --output-file ${project_name}/requirements/production.txt
+uv pip compile ${project_name}/requirements/production.in --no-emit-options --output-file ${project_name}/requirements/production.txt
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to compile production.txt requirements."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile production.txt requirements."
     exit 1
 fi
 
 # Install dependencies based on environment
-echo -e "\e[90m[INFO]\e[0m Installing ${environment} dependencies..."
-pip-sync ${project_name}/requirements/${environment}.txt
+echo -e "\e[38;5;72m[INFO]\e[0m Installing ${environment} dependencies..."
+uv pip sync ${project_name}/requirements/${environment}.txt
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to install ${environment} dependencies."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install ${environment} dependencies."
     exit 1
 fi
 
 # Create Django project
-echo -e "\e[90m[INFO]\e[0m Creating Django project..."
+echo -e "\e[38;5;72m[INFO]\e[0m Creating Django project..."
 django-admin startproject config "${project_name}"
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to create Django project."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create Django project."
     exit 1
 fi
 cd "${project_name}"
 
 # Create applications directory
-echo -e "\e[90m[INFO]\e[0m Setting up applications directory..."
+echo -e "\e[38;5;72m[INFO]\e[0m Setting up applications directory..."
 touch apps/__init__.py
 
 # Create Jinja2 environment configuration
-echo -e "\e[90m[INFO]\e[0m Creating Jinja2 environment configuration..."
+echo -e "\e[38;5;72m[INFO]\e[0m Creating Jinja2 environment configuration..."
 cat <<EOF > config/jinja2.py
 from django.templatetags.static import static
 from django.urls import reverse
@@ -683,7 +683,7 @@ def environment(**options):
 EOF
 
 # Create settings directory and split settings files
-echo -e "\e[90m[INFO]\e[0m Creating settings directory and split settings files..."
+echo -e "\e[38;5;72m[INFO]\e[0m Creating settings directory and split settings files..."
 mkdir -m 755 -p config/settings
 install -m 644 /dev/null config/settings/__init__.py
 install -m 644 /dev/null config/settings/base.py
@@ -1054,19 +1054,19 @@ CACHES = {
 EOF
 
 # Remove the original settings.py as it’s no longer needed
-echo -e "\e[90m[INFO]\e[0m Removing original settings.py..."
+echo -e "\e[38;5;72m[INFO]\e[0m Removing original settings.py..."
 if [ -f config/settings.py ]; then
     rm -f config/settings.py
     if [ $? -ne 0 ]; then
-        echo -e "\e[31m[ERROR]\e[0m Failed to remove original settings.py."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to remove original settings.py."
         exit 1
     fi
 else
-    echo -e "\e[93m[WARNING]\e[0m Original settings.py not found, skipping removal."
+    echo -e "\e[38;5;208m[WARNING]\e[0m Original settings.py not found, skipping removal."
 fi
 
 # Generate a secure SECRET_KEY and update .env files
-echo -e "\e[90m[INFO]\e[0m Generating a secure SECRET_KEY and updating .env files..."
+echo -e "\e[38;5;72m[INFO]\e[0m Generating a secure SECRET_KEY and updating .env files..."
 SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(50))")
 
 # Escape special characters in SECRET_KEY for sed
@@ -1075,12 +1075,12 @@ SECRET_KEY_ESCAPED=$(echo "$SECRET_KEY" | sed 's/[&/\]/\\&/g')
 # Update .env .env files with the new SECRET_KEY in quotes
 sed -i "s/^SECRET_KEY=.*/SECRET_KEY='${SECRET_KEY_ESCAPED}'/" "${project_path}/conf/env_vars/local.env"
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to update SECRET_KEY in local.env."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to update SECRET_KEY in local.env."
     exit 1
 fi
 sed -i "s/^SECRET_KEY=.*/SECRET_KEY='${SECRET_KEY_ESCAPED}'/" "${project_path}/conf/env_vars/production.env"
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to update SECRET_KEY in production.env."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to update SECRET_KEY in production.env."
     exit 1
 fi
 
@@ -1095,19 +1095,19 @@ if settings.DEBUG:
 EOF
 
 # Load environment variables before collecting static files
-echo -e "\e[90m[INFO]\e[0m Loading environment variables from ${environment}.env..."
+echo -e "\e[38;5;72m[INFO]\e[0m Loading environment variables from ${environment}.env..."
 export $(grep -v '^#' "${project_path}/conf/env_vars/${environment}.env" | xargs)
 
 # Collect static files
-echo -e "\e[90m[INFO]\e[0m Collecting static files..."
+echo -e "\e[38;5;72m[INFO]\e[0m Collecting static files..."
 python manage.py collectstatic --noinput
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to collect static files."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files."
     exit 1
 fi
 
 # Configure Gunicorn
-echo -e "\e[90m[INFO]\e[0m Setting up Gunicorn configuration..."
+echo -e "\e[38;5;72m[INFO]\e[0m Setting up Gunicorn configuration..."
 gunicorn_socket="${project_path}/conf/gunicorn/${project_name}.gunicorn.socket"
 gunicorn_service="${project_path}/conf/gunicorn/${project_name}.gunicorn.service"
 
@@ -1149,24 +1149,24 @@ chmod 644 "${gunicorn_service}"
 
 sudo ln -s "${gunicorn_service}" "/etc/systemd/system/${project_name}.gunicorn.service"
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to create symlink for Gunicorn service."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create symlink for Gunicorn service."
     exit 1
 fi
 sudo ln -s "${gunicorn_socket}" "/etc/systemd/system/${project_name}.gunicorn.socket"
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to create symlink for Gunicorn socket."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create symlink for Gunicorn socket."
     exit 1
 fi
 sudo systemctl daemon-reload
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to reload systemd daemon."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload systemd daemon."
     exit 1
 fi
 
 # Start and enable Gunicorn service with status check
 sudo systemctl start "${project_name}.gunicorn.service"
 if ! sudo systemctl is-active "${project_name}.gunicorn.service" > /dev/null; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to start Gunicorn service."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to start Gunicorn service."
     exit 1
 fi
 sudo systemctl enable "${project_name}.gunicorn.service"
@@ -1174,13 +1174,13 @@ sudo systemctl enable "${project_name}.gunicorn.service"
 # Start and enable Gunicorn socket with status check
 sudo systemctl start "${project_name}.gunicorn.socket"
 if ! sudo systemctl is-active "${project_name}.gunicorn.socket" > /dev/null; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to start Gunicorn socket."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to start Gunicorn socket."
     exit 1
 fi
 sudo systemctl enable "${project_name}.gunicorn.socket"
 
 # Configure Nginx
-echo -e "\e[90m[INFO]\e[0m Setting up Nginx configuration..."
+echo -e "\e[38;5;72m[INFO]\e[0m Setting up Nginx configuration..."
 nginx_conf="${project_path}/conf/nginx/nginx.conf"
 cat <<EOF > "${nginx_conf}"
 worker_processes auto;
@@ -1222,7 +1222,7 @@ EOF
 chmod 644 "${nginx_conf}"
 sudo cp "${nginx_conf}" /etc/nginx/nginx.conf
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to copy Nginx configuration."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to copy Nginx configuration."
     exit 1
 fi
 sudo chmod 644 /etc/nginx/nginx.conf
@@ -1371,7 +1371,7 @@ echo -e "[Service]\nPIDFile=/var/cache/nginx/nginx.pid" | sudo tee /etc/systemd/
 # Reload systemd to apply changes
 sudo systemctl daemon-reload
 if [ $? -ne 0 ]; then
-    echo -e "\e[31m[ERROR]\e[0m Failed to reload systemd daemon for Nginx."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload systemd daemon for Nginx."
     exit 1
 fi
 
@@ -1379,22 +1379,22 @@ fi
 if [[ ! -f "/etc/nginx/sites-enabled/${project_name}.conf" ]]; then
     sudo ln -sf "${project_nginx_conf}" "/etc/nginx/sites-enabled/${project_name}.conf"
     if [ $? -ne 0 ]; then
-        echo -e "\e[31m[ERROR]\e[0m Failed to create symbolic link for Nginx configuration."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create symbolic link for Nginx configuration."
         exit 1
     fi
 fi
 
 # Validate Nginx configuration before restarting
 if sudo nginx -t; then
-    echo -e "\e[90m[INFO]\e[0m Restarting Nginx..."
+    echo -e "\e[38;5;72m[INFO]\e[0m Restarting Nginx..."
     sudo systemctl restart nginx
     if ! sudo systemctl is-active nginx > /dev/null; then
-        echo -e "\e[31m[ERROR]\e[0m Failed to restart Nginx service."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to restart Nginx service."
         exit 1
     fi
 else
-    echo -e "\e[31m[ERROR]\e[0m Nginx configuration test failed!"
+    echo -e "\e[38;5;196m[ERROR]\e[0m Nginx configuration test failed!"
     exit 1
 fi
 
-echo -e "\e[32m[SUCCESS]\e[0m Django project initialized, keep up the good work!"
+echo -e "\e[38;5;48m[SUCCESS]\e[0m Django project initialized, keep up the good work!"

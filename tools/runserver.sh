@@ -3,7 +3,7 @@ set -e
 
 read -e -p "Project name: " project_name
 if [[ -z "${project_name}" ]]; then
-    echo -e "\e[31m[ERROR]\e[0m Project name is required."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Project name is required."
     exit 1
 fi
 
@@ -12,31 +12,31 @@ project_path="${project_path/#\~/$HOME}"
 project_path=$(realpath -m "${project_path}")
 
 if [[ -z "${project_path}" ]]; then
-    echo -e "\e[31m[ERROR]\e[0m Project path is required."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Project path is required."
     exit 1
 fi
 
 if [[ ! -d "${project_path}" ]]; then
-    echo -e "\e[31m[ERROR]\e[0m Project directory not found at \e[33m\"${project_path}\"\e[0m."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Project directory not found at \e[38;5;223m${project_path}\e[0m."
     exit 1
 fi
 
 if [[ ! -d "${project_path}/env" ]]; then
-    echo -e "\e[31m[ERROR]\e[0m Virtual environment not found at \e[33m\"${project_path}/env\"\e[0m."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Virtual environment not found at \e[38;5;223m${project_path}/env\e[0m."
     exit 1
 fi
 
-echo -e "\e[90m[INFO]\e[0m Stopping Gunicorn..."
+echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn..."
 if systemctl list-unit-files | grep -q "${project_name}.gunicorn.socket"; then
     if systemctl --quiet is-active "${project_name}.gunicorn.socket"; then
         sudo systemctl stop "${project_name}.gunicorn.socket"
         if [ $? -ne 0 ]; then
-            echo -e "\e[31m[ERROR]\e[0m Failed to stop Gunicorn socket."
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn socket."
             exit 1
         fi
-        echo -e "\e[90m[INFO]\e[0m Gunicorn socket stopped."
+        echo -e "\e[38;5;72m[INFO]\e[0m Gunicorn socket stopped."
     else
-        echo -e "\e[93m[WARNING]\e[0m Gunicorn socket is not active, skipping stop."
+        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn socket is not active, skipping stop."
     fi
 fi
 
@@ -44,36 +44,36 @@ if systemctl list-unit-files | grep -q "${project_name}.gunicorn.service"; then
     if systemctl --quiet is-active "${project_name}.gunicorn.service"; then
         sudo systemctl stop "${project_name}.gunicorn.service"
         if [ $? -ne 0 ]; then
-            echo -e "\e[31m[ERROR]\e[0m Failed to stop Gunicorn service."
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn service."
             exit 1
         fi
-        echo -e "\e[90m[INFO]\e[0m Gunicorn service stopped."
+        echo -e "\e[38;5;72m[INFO]\e[0m Gunicorn service stopped."
     else
-        echo -e "\e[93m[WARNING]\e[0m Gunicorn service is not active, skipping stop."
+        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service is not active, skipping stop."
     fi
 else
-    echo -e "\e[93m[WARNING]\e[0m Gunicorn service '${project_name}.gunicorn.service' not found, skipping stop."
+    echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service '${project_name}.gunicorn.service' not found, skipping stop."
 fi
 
-echo -e "\e[90m[INFO]\e[0m Activating virtual environment..."
+echo -e "\e[38;5;72m[INFO]\e[0m Activating virtual environment..."
 if [[ -f "${project_path}/env/bin/activate" ]]; then
     source "${project_path}/env/bin/activate"
     if [[ -z "$VIRTUAL_ENV" ]]; then
-        echo -e "\e[31m[ERROR]\e[0m Failed to activate virtual environment at \e[33m\"${project_path}/env\"\e[0m."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to activate virtual environment at \e[38;5;223m${project_path}/env\e[0m."
         exit 1
     fi
-    echo -e "\e[90m[INFO]\e[0m Virtual environment activated."
+    echo -e "\e[38;5;72m[INFO]\e[0m Virtual environment activated."
 else
-    echo -e "\e[31m[ERROR]\e[0m Activation script not found at \e[33m\"${project_path}/env/bin/activate\"\e[0m."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Activation script not found at \e[38;5;223m${project_path}/env/bin/activate\e[0m."
     exit 1
 fi
 
 export DJANGO_SETTINGS_MODULE=config.settings.local
 
-echo -e "\e[90m[INFO]\e[0m Running Django development server..."
+echo -e "\e[38;5;72m[INFO]\e[0m Running Django development server..."
 if [[ -f "${project_path}/${project_name}/manage.py" ]]; then
     python "${project_path}/${project_name}/manage.py" runserver 0.0.0.0:8000
 else
-    echo -e "\e[31m[ERROR]\e[0m manage.py not found at \e[33m\"${project_path}/${project_name}/manage.py\"\e[0m."
+    echo -e "\e[38;5;196m[ERROR]\e[0m manage.py not found at \e[38;5;223m${project_path}/${project_name}/manage.py\e[0m."
     exit 1
 fi
