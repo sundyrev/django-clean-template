@@ -59,7 +59,7 @@ echo -e "\e[38;5;72m[INFO]\e[0m Creating project directory structure..."
 mkdir -m 755 -p \
     "${project_path}/docker" \
     "${project_path}/log/nginx" \
-    "${project_path}/conf/"{nginx,gunicorn,env_vars} \
+    "${project_path}/conf/"{nginx,gunicorn,env_vars,redis} \
     "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
     "${project_path}/${project_name}/static/"{css,js,images,admin} \
     "${project_path}/${project_name}/media/uploads"
@@ -81,6 +81,9 @@ gunicorn>=23.0.0  # https://github.com/benoitc/gunicorn
 
 # Templating
 jinja2>=3.1.2  # https://github.com/pallets/jinja (Jinja2 templating engine)
+
+# Authentication
+django-allauth[mfa]>=65.4.1  # https://github.com/pennersr/django-allauth (authentication, MFA support)
 EOL
 
 cat > "${project_path}/${project_name}/requirements/local.in" << EOL
@@ -107,7 +110,6 @@ cat > "${project_path}/${project_name}/requirements/production.in" << EOL
 -r base.in
 
 # Security
-django-allauth[mfa]>=65.4.1  # https://github.com/pennersr/django-allauth (authentication)
 argon2-cffi>=23.1.0  # https://github.com/hynek/argon2_cffi (password hashing)
 
 # Caching
@@ -126,6 +128,38 @@ sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx
 sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/error.log"
 sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/gunicorn.log"
 sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/django.log"
+
+# Create Redis configuration
+echo -e "\e[38;5;72m[INFO]\e[0m Creating Redis configuration file..."
+cat > "${project_path}/conf/redis/redis.conf" << EOL
+# Redis configuration file
+# This is a basic configuration for development/testing.
+# Adjust settings (e.g., maxmemory, requirepass) before production use.
+
+# Listen on all interfaces
+bind 0.0.0.0
+
+# Default Redis port
+port 6379
+
+# Number of databases
+databases 16
+
+# Memory limit (adjust based on your needs)
+maxmemory 256mb
+
+# Eviction policy when memory is full
+maxmemory-policy allkeys-lru
+
+# Uncomment and set a password for production
+# requirepass your_secure_password
+
+# Log level: debug, verbose, notice, warning
+loglevel notice
+
+# Empty means logs go to stdout (Docker-friendly)
+logfile ""
+EOL
 
 # Create Docker files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating Docker configuration files..."
@@ -187,6 +221,9 @@ services:
     container_name: redis
     ports:
       - "6379:6379"
+    volumes:
+      - ./conf/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - backend
     restart: unless-stopped
@@ -715,7 +752,9 @@ DJANGO_APPS = [
 ]
 
 THIRD_PARTY_APPS = [
-    # 'crispy_forms',
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
 ]
 
 LOCAL_APPS = [
@@ -731,6 +770,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -812,6 +852,12 @@ MANAGERS = ADMINS
 
 # Sites framework - Default site ID for django.contrib.sites
 SITE_ID = 1
+
+# Authentication backends for django-allauth
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
+]
 
 # Caching - Base configuration with multiple cache options
 CACHES = {

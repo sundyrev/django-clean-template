@@ -29,26 +29,16 @@ if [[ "${project_path}" == "${script_dir}" ]]; then
     exit 1
 fi
 
-echo -e "\e[38;5;72m[INFO]\e[0m Stopping the Gunicorn socket..."
-if systemctl --quiet is-active "${project_name}.gunicorn.socket"; then
-    sudo systemctl stop "${project_name}.gunicorn.socket"
+# Stop both Gunicorn service and socket simultaneously
+echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn service and socket..."
+if systemctl --quiet is-active "${project_name}.gunicorn.service" || systemctl --quiet is-active "${project_name}.gunicorn.socket"; then
+    sudo systemctl stop "${project_name}.gunicorn.service" "${project_name}.gunicorn.socket"
     if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn socket."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn service or socket."
         exit 1
     fi
 else
-    echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn socket is not active, skipping stop."
-fi
-
-echo -e "\e[38;5;72m[INFO]\e[0m Stopping the Gunicorn service..."
-if systemctl --quiet is-active "${project_name}.gunicorn.service"; then
-    sudo systemctl stop "${project_name}.gunicorn.service"
-    if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn service."
-        exit 1
-    fi
-else
-    echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service is not active, skipping stop."
+    echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service and socket are not active, skipping stop."
 fi
 
 echo -e "\e[38;5;72m[INFO]\e[0m Disabling the Gunicorn service and socket..."
@@ -94,15 +84,19 @@ if [[ -f "${nginx_config}" ]]; then
         exit 1
     fi
     echo -e "\e[38;5;72m[INFO]\e[0m Reloading Nginx after configuration removal..."
-    if sudo nginx -t &>/dev/null; then
-        sudo systemctl reload nginx
-        if [ $? -ne 0 ]; then
-            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload Nginx service."
+    if systemctl --quiet is-active nginx; then
+        if sudo nginx -t &>/dev/null; then
+            sudo systemctl reload nginx
+            if [ $? -ne 0 ]; then
+                echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload Nginx service."
+                exit 1
+            fi
+        else
+            echo -e "\e[38;5;196m[ERROR]\e[0m Nginx configuration test failed after removal."
             exit 1
         fi
     else
-        echo -e "\e[38;5;196m[ERROR]\e[0m Nginx configuration test failed after removal."
-        exit 1
+        echo -e "\e[38;5;208m[WARNING]\e[0m Nginx service is not active, skipping reload."
     fi
 else
     echo -e "\e[38;5;208m[WARNING]\e[0m No Nginx configuration found at \e[38;5;223m${nginx_config}\e[0m, skipping removal."

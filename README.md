@@ -10,9 +10,11 @@ A clean and production-ready Django project template that supports both local de
 - Gunicorn with Unix sockets for local deployment and TCP ports for Docker
 - Nginx as a reverse proxy for serving static and media files
 - PostgreSQL 13+ support
+- Redis 7+ for caching (with basic configuration)
 - Docker and Docker Compose for containerized deployment
 - Split settings for `local` and `production` environments with `.env` files
 - Jinja2 templating support alongside Django templates
+- Authentication with `django-allauth` (including MFA support)
 - Pre-configured logging with separate log files for Django, Gunicorn, and Nginx
 - Basic security settings for production
 
@@ -39,6 +41,8 @@ project_directory/
 │   ├── gunicorn/              # Gunicorn Systemd units
 │   │   ├── project_name.gunicorn.socket   # Gunicorn socket unit
 │   │   └── project_name.gunicorn.service  # Gunicorn service unit
+│   ├── redis/                 # Redis configuration
+│   │   └── redis.conf         # Redis config file
 │   └── env_vars/              # Environment variables
 │       ├── local.env          # Local environment settings
 │       └── production.env     # Production environment settings
@@ -246,6 +250,8 @@ uv pip sync project_name/requirements/local.txt
 
 - **Consistency:** For larger projects or team collaboration, use TCP ports (`127.0.0.1:8000` locally, `0.0.0.0:8000` in Docker) everywhere to avoid configuration differences.
 - **Security:** Update `production.env` with a strong `SECRET_KEY` and enable HTTPS in production (uncomment HSTS headers in `docker.conf`).
+- **Redis Configuration:** The provided `conf/redis/redis.conf` is a basic template for development. Before production, adjust settings like `maxmemory`, uncomment and set `requirepass` for security, and review other parameters based on your workload.
+- **django-allauth:** Requires `allauth.account.middleware.AccountMiddleware` in `MIDDLEWARE` (included in `base.py`). Configure additional settings (e.g., social auth) in `settings/production.py` if needed.
 - **Monitoring:** Integrate Sentry (included in `production.in`) by setting `SENTRY_DSN` in `production.env`.
 
 ## Cleanup
@@ -280,6 +286,7 @@ To stop and remove the project, use the provided `delete.sh` script or manual co
 - **Gunicorn fails to start:** Check logs in `log/gunicorn.log` or `systemctl status`.
 - **Nginx errors:** Review `log/nginx/error.log` or `docker-compose logs nginx`.
 - **Database issues:** Verify `DATABASE_URL` in `.env` files and ensure PostgreSQL is running.
+- **Redis fails to start:** Check `docker-compose logs redis` for config errors; ensure `redis.conf` syntax is valid (comments on separate lines).
 
 ## Support
 
