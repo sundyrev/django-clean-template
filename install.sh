@@ -7,6 +7,12 @@ if ! command -v pyenv &> /dev/null; then
     exit 1
 fi
 
+# Check if git is installed
+if ! command -v git &> /dev/null; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Git is not installed. Please install it before proceeding."
+    exit 1
+fi
+
 # Variables
 project_domain=""
 project_path=$(dirname "$(realpath "$0")")
@@ -34,7 +40,7 @@ while true; do
             break
             ;;
         *)
-            echo -e "\e[91m[ERROR]\e[0m Invalid choice. Please enter \e[38;5;117m1\e[0m or \e[38;5;117m2\e[0m."
+            echo -e "\e[38;5;196m[ERROR]\e[0m Invalid choice. Please enter \e[38;5;117m1\e[0m or \e[38;5;117m2\e[0m."
             ;;
     esac
 done
@@ -97,6 +103,7 @@ django-extensions>=3.2.3  # https://github.com/django-extensions/django-extensio
 # Code quality
 ruff>=0.11.2  # https://github.com/astral-sh/ruff (modern linter and formatter)
 coverage>=7.7.1  # https://github.com/nedbat/coveragepy (test coverage)
+pre-commit>=3.6.0  # https://github.com/pre-commit/pre-commit (git hook framework)
 mypy>=1.15.0  # https://github.com/python/mypy (static type checking)
 django-stubs>=5.1.3  # https://github.com/typeddjango/django-stubs (type hints for Django)
 
@@ -126,8 +133,112 @@ EOL
 # Create log files with proper permissions
 sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/access.log"
 sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/error.log"
-sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/gunicorn.log"
-sudo install -m 664 -o "${USER}" -g www-data /dev/null "${project_path}/log/django.log"
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/gunicorn.log"
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/django.log"
+
+# Create pyproject.toml for Ruff configuration
+echo -e "\e[38;5;72m[INFO]\e[0m Creating pyproject.toml for Ruff configuration..."
+install -m 644 /dev/null "${project_path}/pyproject.toml"
+cat > "${project_path}/pyproject.toml" << EOL
+[tool.ruff]
+src = ["${project_name}"]
+line-length = 88
+target-version = "py311"  # "py312"
+exclude = [
+    "${project_name}/config/asgi.py",
+    "${project_name}/config/wsgi.py",
+    "${project_name}/manage.py",
+    "**/migrations/*",
+    "**/templates/**/*.html",
+    "**/static/**/*",
+    "**/jinja2/**/*.html",
+    "**/__pycache__/",
+    "**/*.pyc",
+]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W", "I", "DJ", "UP", "RUF",
+    "C90", "N", "S", "B", "A", "COM", "C4", "DTZ", "T10", "PERF"
+]
+ignore = ["E501", "S101"]
+# Django-specific settings integrated here
+extend-select = ["DJ"]  # Enable Django-specific rules
+
+[tool.ruff.lint.per-file-ignores]
+"${project_name}/config/settings/local.py" = ["F403", "F405"]
+"${project_name}/config/settings/production.py" = ["F403", "F405"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["${project_name}"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "--ds=${project_name}.config.settings.test --reuse-db --import-mode=importlib"
+python_files = ["tests.py", "test_*.py"]
+
+[tool.coverage.run]
+include = ["${project_name}/**"]
+omit = ["*/migrations/*", "*/tests/*"]
+plugins = ["django_coverage_plugin"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+plugins = ["mypy_django_plugin.main"]
+
+[[tool.mypy.overrides]]
+module = "*.migrations.*"
+ignore_errors = true
+
+[tool.django-stubs]
+django_settings_module = "${project_name}.config.settings"
+EOL
+
+# Create .pre-commit-config.yaml for pre-commit hooks
+echo -e "\e[38;5;72m[INFO]\e[0m Creating .pre-commit-config.yaml for pre-commit hooks..."
+install -m 644 /dev/null "${project_path}/.pre-commit-config.yaml"
+cat > "${project_path}/.pre-commit-config.yaml" << EOL
+exclude: '^${project_name}/static/.*|.*/migrations/.*|.*/__pycache__/.*'
+default_stages: [pre-commit]
+minimum_pre_commit_version: "3.2.0"
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+      - id: detect-private-key
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        args: ['--tab-width', '2', '--single-quote']
+        files: '${project_name}/jinja2/.*'
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+EOL
 
 # Create Redis configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating Redis configuration file..."
@@ -423,8 +534,11 @@ if [ $? -ne 0 ]; then
 fi
 
 # Create .gitignore file
+echo -e "\e[38;5;72m[INFO]\e[0m Creating .gitignore file..."
 install -m 644 /dev/null "${project_path}/.gitignore"
 cat > "${project_path}/.gitignore" << EOL
+install.sh
+
 # Python
 __pycache__/
 *.py[cod]
@@ -586,8 +700,8 @@ db.sqlite3-journal
 .docker
 docker-compose*.yml
 Dockerfile*
-!docker/Dockerfile.local
-!docker/Dockerfile.production
+!docker/Dockerfile.django
+!docker/Dockerfile.nginx
 
 # IDE
 .idea/
@@ -635,8 +749,8 @@ EOL
 if ! command -v uv &> /dev/null; then
     echo -e "\e[38;5;72m[INFO]\e[0m Installing uv..."
     python3 -m pip install uv
-    if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install uv."
+    if [ $? -ne 0 ] || ! command -v uv &> /dev/null; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install uv or uv not found in PATH."
         exit 1
     fi
 fi
@@ -666,17 +780,17 @@ fi
 # Compile requirements files
 echo -e "\e[38;5;72m[INFO]\e[0m Compiling requirements files..."
 
-uv pip compile ${project_name}/requirements/base.in --no-emit-options --output-file ${project_name}/requirements/base.txt
+uv pip compile ${project_name}/requirements/base.in --output-file ${project_name}/requirements/base.txt
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile base.txt requirements."
     exit 1
 fi
-uv pip compile ${project_name}/requirements/local.in --no-emit-options --output-file ${project_name}/requirements/local.txt
+uv pip compile ${project_name}/requirements/local.in --output-file ${project_name}/requirements/local.txt
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile local.txt requirements."
     exit 1
 fi
-uv pip compile ${project_name}/requirements/production.in --no-emit-options --output-file ${project_name}/requirements/production.txt
+uv pip compile ${project_name}/requirements/production.in --output-file ${project_name}/requirements/production.txt
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile production.txt requirements."
     exit 1
@@ -684,7 +798,7 @@ fi
 
 # Install dependencies based on environment
 echo -e "\e[38;5;72m[INFO]\e[0m Installing ${environment} dependencies..."
-uv pip sync ${project_name}/requirements/${environment}.txt
+uv pip sync "${project_path}/${project_name}/requirements/${environment}.txt"
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install ${environment} dependencies."
     exit 1
@@ -708,14 +822,18 @@ echo -e "\e[38;5;72m[INFO]\e[0m Creating Jinja2 environment configuration..."
 cat <<EOF > config/jinja2.py
 from django.templatetags.static import static
 from django.urls import reverse
+
 from jinja2 import Environment
 
+
 def environment(**options):
-    env = Environment(**options)
-    env.globals.update({
-        'static': static,
-        'url': reverse,
-    })
+    env = Environment(autoescape=True, **options)
+    env.globals.update(
+        {
+            'static': static,
+            'url': reverse,
+        },
+    )
     return env
 EOF
 
@@ -732,8 +850,9 @@ install -m 644 /dev/null config/settings/test.py
 cat > config/settings/base.py << EOF
 import sys
 from pathlib import Path
-from django.utils.translation import gettext_lazy as _
+
 import environ
+from django.utils.translation import gettext_lazy as _
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -806,7 +925,9 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Password validation - Rules for secure passwords
 AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
@@ -847,7 +968,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Admin - Contact information for error notifications
 STAFF_ALEXEY = ('Alexey', 'aleksey.sundyrev@gmail.com')
-ADMINS = (STAFF_ALEXEY)
+ADMINS = STAFF_ALEXEY
 MANAGERS = ADMINS
 
 # Sites framework - Default site ID for django.contrib.sites
@@ -898,6 +1019,8 @@ EOF
 # Populate settings/local.py
 cat > config/settings/local.py << EOF
 from .base import *
+
+env = environ.Env()
 
 env.read_env(env_file=BASE_DIR / 'conf/env_vars/local.env')
 SECRET_KEY = env('SECRET_KEY')
@@ -996,6 +1119,8 @@ EOF
 cat > config/settings/production.py << EOF
 from .base import *
 
+env = environ.Env()
+
 env.read_env(env_file=BASE_DIR / 'conf/env_vars/production.env')
 SECRET_KEY = env('SECRET_KEY')
 
@@ -1042,7 +1167,7 @@ CACHES = {
         'OPTIONS': {
             'IGNORE_EXCEPTIONS': True,
         },
-    }
+    },
 }
 
 # Logging - Production logging with error notifications
@@ -1088,7 +1213,11 @@ EOF
 
 # Populate settings/test.py
 cat > config/settings/test.py << EOF
-from .base import *
+import environ
+
+from .base import CACHES
+
+env = environ.Env()
 
 SECRET_KEY = env('SECRET_KEY')
 TEST_RUNNER = 'django.test.runner.DiscoverRunner'
@@ -1101,8 +1230,8 @@ EOF
 
 # Remove the original settings.py as it’s no longer needed
 echo -e "\e[38;5;72m[INFO]\e[0m Removing original settings.py..."
-if [ -f config/settings.py ]; then
-    rm -f config/settings.py
+if [ -f "${project_path}/${project_name}/config/settings.py" ]; then
+    rm -f "${project_path}/${project_name}/config/settings.py"
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to remove original settings.py."
         exit 1
@@ -1132,10 +1261,17 @@ fi
 
 # Update settings/urls.py
 urls_path=config/urls.py
-sed -i "1,/from django.urls import path/c\from django.contrib import admin\nfrom django.urls import path, include\nfrom django.conf import settings" "${urls_path}"
-echo "" >> "${urls_path}"
-# Add debug toolbar urls settings
+# Clearing the existing file
+> "${urls_path}"
 cat >> "${urls_path}" << 'EOF'
+from django.conf import settings
+from django.contrib import admin
+from django.urls import include, path
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+]
+
 if settings.DEBUG:
     urlpatterns.append(path('__debug__/', include('debug_toolbar.urls')))
 EOF
@@ -1143,13 +1279,19 @@ EOF
 # Load environment variables before collecting static files
 echo -e "\e[38;5;72m[INFO]\e[0m Loading environment variables from ${environment}.env..."
 export $(grep -v '^#' "${project_path}/conf/env_vars/${environment}.env" | xargs)
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to export environment variables from ${environment}.env."
+    exit 1
+fi
 
 # Collect static files
-echo -e "\e[38;5;72m[INFO]\e[0m Collecting static files..."
-python manage.py collectstatic --noinput
-if [ $? -ne 0 ]; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files."
-    exit 1
+if [ "$environment" = "local" ]; then
+    echo -e "\e[38;5;72m[INFO]\e[0m Collecting static files..."
+    python "${project_path}/${project_name}/manage.py" collectstatic --noinput
+    if [ $? -ne 0 ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files."
+        exit 1
+    fi
 fi
 
 # Configure Gunicorn
@@ -1176,7 +1318,7 @@ Requires=${project_name}.gunicorn.socket
 After=network.target
 
 [Service]
-User=${USER}
+User=www-data
 Group=www-data
 WorkingDirectory=${project_path}/${project_name}
 EnvironmentFile=${project_path}/conf/env_vars/${environment}.env
@@ -1216,6 +1358,10 @@ if ! sudo systemctl is-active "${project_name}.gunicorn.service" > /dev/null; th
     exit 1
 fi
 sudo systemctl enable "${project_name}.gunicorn.service"
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to enable Gunicorn service."
+    exit 1
+fi
 
 # Start and enable Gunicorn socket with status check
 sudo systemctl start "${project_name}.gunicorn.socket"
@@ -1224,11 +1370,16 @@ if ! sudo systemctl is-active "${project_name}.gunicorn.socket" > /dev/null; the
     exit 1
 fi
 sudo systemctl enable "${project_name}.gunicorn.socket"
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to enable Gunicorn socket."
+    exit 1
+fi
 
 # Configure Nginx
 echo -e "\e[38;5;72m[INFO]\e[0m Setting up Nginx configuration..."
 nginx_conf="${project_path}/conf/nginx/nginx.conf"
 cat <<EOF > "${nginx_conf}"
+user www-data www-data;
 worker_processes auto;
 
 events {
@@ -1443,4 +1594,34 @@ else
     exit 1
 fi
 
+# Initialize Git repository and install pre-commit hooks if environment is local
+cd "${project_path}"
+if [ "$environment" = "local" ]; then
+    echo -e "\e[38;5;72m[INFO]\e[0m Initializing Git repository..."
+    git init
+    if [ $? -ne 0 ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to initialize Git repository."
+        exit 1
+    fi
+    git add .gitignore .dockerignore .pre-commit-config.yaml pyproject.toml docker-compose.yml "${project_name}/"
+    git commit -m "chore: init project structure"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create initial Git commit."
+        exit 1
+    fi
+    echo -e "\e[38;5;72m[INFO]\e[0m Installing pre-commit hooks..."
+    pre-commit install
+    if [ $? -ne 0 ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install pre-commit hooks."
+        exit 1
+    fi
+fi
+
+# Success message and script removal
 echo -e "\e[38;5;48m[SUCCESS]\e[0m Django project initialized, keep up the good work!"
+script_path="${project_path}/install.sh"
+rm -f "$script_path"
+if [ -f "$script_path" ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to remove install.sh at $script_path."
+    exit 1
+fi

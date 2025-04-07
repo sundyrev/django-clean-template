@@ -39,7 +39,7 @@ cd "${project_path}" || {
 
 echo -e "\e[38;5;72m[INFO]\e[0m Updating code from Git..."
 if [[ -d ".git" ]]; then
-    git pull origin main
+    git pull origin master
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to update code from Git."
         exit 1
