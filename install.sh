@@ -13,6 +13,14 @@ if ! command -v git &> /dev/null; then
     exit 1
 fi
 
+# Check if the current user is in the www-data group
+# This is useful for ensuring proper permissions for web server-related tasks
+if ! groups "${USER}" | grep -qw 'www-data'; then
+    echo -e "\e[38;5;208m[WARNING]\e[0m User ${USER} is not in the www-data group. Run:"
+    echo "  sudo usermod -aG www-data ${USER}"
+    echo "Then restart your session or run: newgrp www-data"
+fi
+
 # Variables
 project_domain=""
 project_path=$(dirname "$(realpath "$0")")
@@ -69,6 +77,25 @@ mkdir -m 755 -p \
     "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
     "${project_path}/${project_name}/static/"{css,js,images,admin} \
     "${project_path}/${project_name}/media/uploads"
+
+# Set ownership for web server directories
+sudo chown -R www-data:www-data \
+    "${project_path}/log" \
+    "${project_path}/conf" \
+    "${project_path}/${project_name}/staticfiles" \
+    "${project_path}/${project_name}/media"
+
+# Set base permissions
+sudo chmod -R 755 "${project_path}/conf"
+sudo chmod -R 775 "${project_path}/log"
+sudo chmod -R 755 "${project_path}/${project_name}/staticfiles"
+sudo chmod -R 775 "${project_path}/${project_name}/media"
+
+# Set specific permissions
+sudo find "${project_path}/conf" -type f -exec chmod 644 {} \;
+sudo find "${project_path}/log" -type f -exec chmod 664 {} \;
+sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
+sudo find "${project_path}/${project_name}/media" -type f -exec chmod 664 {} \;
 
 # Create requirements directory and base files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating requirements files..."
@@ -1292,6 +1319,8 @@ if [ "$environment" = "local" ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files."
         exit 1
     fi
+    # Ensure static files are owned by www-data
+    sudo chown -R www-data:www-data "${project_path}/${project_name}/staticfiles"
 fi
 
 # Configure Gunicorn
@@ -1318,6 +1347,7 @@ Requires=${project_name}.gunicorn.socket
 After=network.target
 
 [Service]
+UMask=002
 User=www-data
 Group=www-data
 WorkingDirectory=${project_path}/${project_name}
