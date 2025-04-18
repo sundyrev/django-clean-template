@@ -292,6 +292,17 @@ repos:
       - id: ruff-format
 EOL
 
+# Create pytest.ini for pytest configuration
+echo -e "\e[38;5;72m[INFO]\e[0m Creating pytest.ini for pytest configuration..."
+install -m 644 /dev/null "${project_path}/pytest.ini"
+cat > "${project_path}/pytest.ini" << EOL
+[pytest]
+DJANGO_SETTINGS_MODULE = config.settings.local
+python_files = tests.py test_*.py *_tests.py
+pythonpath = .
+addopts = --ds=config.settings.local --strict-markers
+EOL
+
 # Create Redis configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating Redis configuration file..."
 sudo install -o www-data -g www-data -m 644 /dev/null "${project_path}/conf/redis/redis.conf"
