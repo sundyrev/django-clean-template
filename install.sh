@@ -543,21 +543,25 @@ EOL
 
 # Create PostgreSQL user and database
 echo -e "\e[38;5;72m[INFO]\e[0m Creating PostgreSQL user and database..."
-
 # Create user using PL/pgSQL
 sudo -u postgres psql -q <<EOF
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${project_name}_user') THEN
-        CREATE USER ${project_name}_user WITH PASSWORD '${project_name}_password';
-        ALTER ROLE ${project_name}_user SET client_encoding TO 'utf8';
-        ALTER ROLE ${project_name}_user SET default_transaction_isolation TO 'read committed';
-        ALTER ROLE ${project_name}_user SET timezone TO 'UTC';
-        RAISE NOTICE 'User ${project_name}_user created with settings.';
+        CREATE ROLE ${project_name}_user
+            WITH LOGIN
+                 PASSWORD '${project_name}_password'
+                 CREATEDB;
+        RAISE NOTICE 'User % created with settings.', '${project_name}_user';
     ELSE
-        RAISE NOTICE 'User ${project_name}_user already exists. Skipping creation and settings.';
+        RAISE NOTICE 'User % already exists. Skipping creation and settings.', '${project_name}_user';
     END IF;
-END \$\$;
+
+    ALTER ROLE ${project_name}_user SET client_encoding TO 'utf8';
+    ALTER ROLE ${project_name}_user SET default_transaction_isolation TO 'read committed';
+    ALTER ROLE ${project_name}_user SET timezone TO 'UTC';
+END
+\$\$;
 EOF
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create PostgreSQL user ${project_name}_user."
