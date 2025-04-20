@@ -298,9 +298,43 @@ install -m 644 /dev/null "${project_path}/pytest.ini"
 cat > "${project_path}/pytest.ini" << EOL
 [pytest]
 DJANGO_SETTINGS_MODULE = config.settings.local
-python_files = tests.py test_*.py *_tests.py
-pythonpath = .
-addopts = --ds=config.settings.local --strict-markers
+python_files = tests.py test_*.py
+addopts = --strict-markers --tb=short --capture=no
+log_level = WARNING
+EOL
+
+# Create .coveragerc for coverage configuration
+echo -e "\e[38;5;72m[INFO]\e[0m Creating .coveragerc for coverage configuration..."
+install -m 644 /dev/null "${project_path}/.coveragerc"
+cat > "${project_path}/.coveragerc" << EOL
+[run]
+# Only measure files under the "${project_name}" package
+source = ${project_name}
+
+# Exclude these patterns from the coverage measurement
+omit =
+    ${project_name}/*/tests/*
+    ${project_name}/*/migrations/*
+    ${project_name}/manage.py
+    ${project_name}/config/wsgi.py
+    ${project_name}/config/asgi.py
+    ${project_name}/config/settings/*
+    ${project_name}/jinja2/*
+    ${project_name}/static/*
+    ${project_name}/staticfiles/*
+    ${project_name}/templates/*
+
+# Measure branch coverage (which lines executed vs. logical branches)
+branch = True
+
+[report]
+# Show which lines are missing
+show_missing = True
+
+# Do not count these lines (e.g. pragmas or __main__ guard)
+exclude_lines =
+    pragma: no cover
+    if __name__ == '__main__':
 EOL
 
 # Create Redis configuration
@@ -940,18 +974,28 @@ from django.template.context_processors import csrf
 from django.templatetags.static import static
 from django.urls import reverse
 
-from jinja2 import Environment
+from jinja2 import Environment, select_autoescape
 
 
 def environment(**options):
-    env = Environment(**options)
+    """Configure and return a Jinja2 environment."""
+    options.pop('autoescape', None)
+    env = Environment(
+        autoescape=select_autoescape(
+            enabled_extensions=('html', 'j2'),
+            default_for_string=True,
+        ),
+        **options,
+    )
+
     env.globals.update(
         {
             'static': static,
             'url': reverse,
             'csrf_token': csrf,
-        },
+        }
     )
+
     return env
 EOF
 
@@ -1211,7 +1255,7 @@ LOGGING = {
     },
     'root': {
         'handlers': ['console', 'file'],
-        'level': 'DEBUG',
+        'level': 'INFO',
     },
     'loggers': {
         'django': {
@@ -1227,6 +1271,16 @@ LOGGING = {
         'django.utils.autoreload': {
             'handlers': ['console'],
             'level': 'WARNING',
+            'propagate': False,
+        },
+        'faker': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
             'propagate': False,
         },
     },
@@ -1769,7 +1823,7 @@ if [ "$environment" = "local" ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to initialize Git repository."
         exit 1
     fi
-    git add .gitignore .dockerignore .pre-commit-config.yaml .djlintrc pyproject.toml docker-compose.yml "${project_name}/"
+    git add .gitignore .dockerignore .pre-commit-config.yaml .djlintrc pyproject.toml docker-compose.yml .coveragerc pytest.ini docker/ "${project_name}/"
     git commit -m "chore: init project structure"
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create initial Git commit."

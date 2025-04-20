@@ -38,6 +38,7 @@ A clean and production-ready Django project template that supports both local de
 - Code quality tools including `ruff` for linting Python code and `djlint` for linting and formatting Jinja2 templates
 - Authentication with `django-allauth` (including MFA support)
 - Pre-configured logging with separate log files for Django, Gunicorn, and Nginx
+- Test coverage measurement with `coverage` and `.coveragerc` for precise code coverage reports
 
 ## Limitations
 
@@ -54,6 +55,8 @@ project_directory/
 ├── .gitignore                 # Git ignore rules
 ├── .dockerignore              # Docker ignore rules
 ├── .djlintrc                  # Configuration for djlint (Jinja2 linter/formatter)
+├── .coveragerc                # Configuration for coverage (test coverage measurement)
+├── pytest.ini                 # Configuration for pytest
 ├── docker-compose.yml         # Docker Compose configuration
 ├── conf/                      # Configuration files
 │   ├── env_vars/              # Environment variables
@@ -117,7 +120,7 @@ project_directory/
     └── templates/             # Django templates (empty by default)
 ```
 
-**Note**: The `.djlintrc` file is now included in the project root to configure `djlint` for linting and formatting Jinja2 templates.
+**Note**: The `.djlintrc` file is included in the project root to configure `djlint` for linting and formatting Jinja2 templates, and `.coveragerc` configures `coverage` for test coverage reporting.
 
 ## Prerequisites
 
@@ -423,6 +426,11 @@ This intentional split allows flexibility: local development can skip Docker bui
 - **Redis Configuration**: The provided `conf/redis/redis.conf` is a basic template for development. Before production, adjust settings like `maxmemory`, uncomment and set `requirepass` for security, and review other parameters based on your workload.
 - **django-allauth**: Requires `allauth.account.middleware.AccountMiddleware` in `MIDDLEWARE` (included in `base.py`). Configure additional settings (e.g., social auth) in `settings/production.py` if needed.
 - **Monitoring**: Integrate Sentry (included in `production.in`) by setting `SENTRY_DSN` in `production.env`.
+- **Test Coverage**: Use `coverage` to measure test coverage and ensure high code quality. Run tests with coverage and generate a detailed report:
+  ```zsh
+  coverage run <project_name>/manage.py test config.tests
+  coverage report -m
+  ```
 
 ## Troubleshooting
 
