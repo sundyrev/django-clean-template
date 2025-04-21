@@ -237,15 +237,6 @@ addopts = "--ds=${project_name}.config.settings.test --import-mode=importlib"
 python_files = ["tests.py", "test_*.py"]
 DJANGO_SETTINGS_MODULE = "${project_name}.config.settings.test"  # Test settings
 
-[tool.coverage.run]
-source = ["${project_name}"]  # Coverage for the project directory
-omit = [
-    "${project_name}/**/migrations/*",      # Exclude migrations
-    "${project_name}/**/tests/*",           # Exclude tests
-    "${project_name}/config/settings/*"     # Exclude settings
-]
-plugins = ["django_coverage_plugin"]
-
 [tool.mypy]
 python_version = "3.12"
 check_untyped_defs = true
