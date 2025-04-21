@@ -180,66 +180,93 @@ echo -e "\e[38;5;72m[INFO]\e[0m Creating pyproject.toml for Ruff configuration..
 install -m 644 /dev/null "${project_path}/pyproject.toml"
 cat > "${project_path}/pyproject.toml" << EOL
 [tool.ruff]
-src = ["${project_name}"]
-line-length = 88
-target-version = "py312"
+src = ["${project_name}"]                   # Project root directory
+line-length = 88                            # Maximum line length
+target-version = "py312"                    # Target Python version
 exclude = [
-    "${project_name}/config/asgi.py",
-    "${project_name}/config/wsgi.py",
-    "${project_name}/manage.py",
-    "**/migrations/*",
-    "**/templates/**/*.html",
-    "**/static/**/*",
-    "**/*.j2",
-    "**/__pycache__/",
-    "**/*.pyc",
+    "${project_name}/config/asgi.py",       # Exclude ASGI configuration
+    "${project_name}/config/wsgi.py",       # Exclude WSGI configuration
+    "${project_name}/manage.py",            # Exclude manage.py
+    "${project_name}/**/migrations/*",      # Exclude migrations
+    "${project_name}/**/tests/*",           # Exclude tests
+    "${project_name}/static/**/*",          # Exclude static files
+    "**/__pycache__/",                      # Exclude Python cache
+    "**/*.pyc",                             # Exclude compiled Python files
+    "**/*.j2",                              # Exclude Jinja2 templates
 ]
 
 [tool.ruff.lint]
 select = [
-    "E", "F", "W", "I", "DJ", "UP", "RUF",
-    "C90", "N", "S", "B", "A", "COM", "C4", "DTZ", "T10", "PERF"
+    "E", "F", "W", "I",                     # PEP 8, Pyflakes, isort
+    "DJ", "UP", "RUF",                      # Django, pyupgrade, Ruff-specific
+    "D", "C90", "N",                        # Docstring, complexity, PEP 8 naming
+    "S", "B", "A",                          # Security, bugbear, builtins
+    "C4",                                   # Comprehensions
+    "DTZ",                                  # Datetime
+    "T10", "PERF"                           # Debug calls, performance
 ]
-ignore = ["E501", "S101", "COM812"]
-# Django-specific settings integrated here
-extend-select = ["DJ"]  # Enable Django-specific rules
+ignore = [
+    "E501",                                 # Line too long
+    "D100",                                 # Missing module docstring
+    "D104",                                 # Missing package docstring
+    "D212",                                 # Conflicts with D211
+    "D203",                                 # Conflicts with D211
+    "S101"                                  # Assert usage
+]
+fixable = [
+    "E", "F", "W", "I", "UP", "RUF", "C4", "T10"  # Rules that Ruff can auto-fix
+]
 
 [tool.ruff.lint.per-file-ignores]
-"${project_name}/config/settings/local.py" = ["F403", "F405"]
-"${project_name}/config/settings/production.py" = ["F403", "F405"]
+"${project_name}/config/settings/local.py" = ["F403", "F405"]       # Ignore * imports
+"${project_name}/config/settings/production.py" = ["F403", "F405"]  # Ignore * imports
 
 [tool.ruff.lint.isort]
-known-first-party = ["${project_name}"]
+known-first-party = ["${project_name}"]  # Custom modules
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"                       # Docstring style
 
 [tool.ruff.format]
-quote-style = "single"
-indent-style = "space"
+quote-style = "single"                      # Single quotes
+indent-style = "space"                      # Space indentation
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "--ds=${project_name}.config.settings.test --reuse-db --import-mode=importlib"
+addopts = "--ds=${project_name}.config.settings.test --import-mode=importlib"
 python_files = ["tests.py", "test_*.py"]
+DJANGO_SETTINGS_MODULE = "${project_name}.config.settings.test"  # Test settings
 
 [tool.coverage.run]
-include = ["${project_name}/**"]
-omit = ["*/migrations/*", "*/tests/*"]
+source = ["${project_name}"]  # Coverage for the project directory
+omit = [
+    "${project_name}/**/migrations/*",      # Exclude migrations
+    "${project_name}/**/tests/*",           # Exclude tests
+    "${project_name}/config/settings/*"     # Exclude settings
+]
 plugins = ["django_coverage_plugin"]
 
 [tool.mypy]
 python_version = "3.12"
 check_untyped_defs = true
-ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
 plugins = ["mypy_django_plugin.main"]
+disallow_untyped_defs = true  # Strict type checking
 
-[[tool.mypy.overrides]]
-module = "*.migrations.*"
+[tool.mypy.overrides]
+module = [
+    "${project_name}.*.migrations.*",       # Ignore migrations
+    "allauth.*"                             # Ignore django-allauth
+]
 ignore_errors = true
 
 [tool.django-stubs]
-django_settings_module = "${project_name}.config.settings"
+django_settings_module = "${project_name}.config.settings"  # Settings for django-stubs
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12                         # Cyclomatic complexity limit
 EOL
 
 # Create .djlintrc for djlint configuration
