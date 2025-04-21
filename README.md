@@ -120,8 +120,6 @@ project_directory/
     └── templates/             # Django templates (empty by default)
 ```
 
-**Note**: The `.djlintrc` file is included in the project root to configure `djlint` for linting and formatting Jinja2 templates, and `.coveragerc` configures `coverage` for test coverage reporting.
-
 ## Prerequisites
 
 - **Python 3.12+**: Managed via `pyenv`.
