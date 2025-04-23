@@ -99,14 +99,22 @@ sudo chown -R www-data:www-data \
 # Set base permissions
 sudo chmod -R 755 "${project_path}/conf"
 sudo chmod -R 775 "${project_path}/log"
-sudo chmod -R 755 "${project_path}/${project_name}/staticfiles"
 sudo chmod -R 775 "${project_path}/${project_name}/media"
+if [ "$environment" = "local" ]; then
+    sudo chmod -R 775 "${project_path}/${project_name}/staticfiles"
+else
+    sudo chmod -R 755 "${project_path}/${project_name}/staticfiles"
+fi
 
 # Set specific permissions
 sudo find "${project_path}/conf" -type f -exec chmod 644 {} \;
 sudo find "${project_path}/log" -type f -exec chmod 664 {} \;
-sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
 sudo find "${project_path}/${project_name}/media" -type f -exec chmod 664 {} \;
+if [ "$environment" = "local" ]; then
+    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 664 {} \;
+else
+    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
+fi
 
 # Create requirements directory and base files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating requirements files..."
@@ -1479,14 +1487,12 @@ fi
 if [ "$environment" = "local" ]; then
     echo -e "\e[38;5;72m[INFO]\e[0m Collecting static files..."
     source "$venv_path/bin/activate"
-    sudo chown "${USER}:${USER}" "${project_path}/${project_name}/staticfiles"
     python "${project_path}/${project_name}/manage.py" collectstatic --noinput
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files."
         deactivate
         exit 1
     fi
-    sudo chown -R www-data:www-data "${project_path}/${project_name}/staticfiles"
     deactivate
 fi
 
