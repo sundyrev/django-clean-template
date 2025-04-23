@@ -99,74 +99,83 @@ sudo chown -R www-data:www-data \
 # Set base permissions
 sudo chmod -R 755 "${project_path}/conf"
 sudo chmod -R 775 "${project_path}/log"
-sudo chmod -R 755 "${project_path}/${project_name}/staticfiles"
 sudo chmod -R 775 "${project_path}/${project_name}/media"
+if [ "$environment" = "local" ]; then
+    sudo chmod -R 775 "${project_path}/${project_name}/staticfiles"
+else
+    sudo chmod -R 755 "${project_path}/${project_name}/staticfiles"
+fi
 
 # Set specific permissions
 sudo find "${project_path}/conf" -type f -exec chmod 644 {} \;
 sudo find "${project_path}/log" -type f -exec chmod 664 {} \;
-sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
 sudo find "${project_path}/${project_name}/media" -type f -exec chmod 664 {} \;
+if [ "$environment" = "local" ]; then
+    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 664 {} \;
+else
+    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
+fi
 
 # Create requirements directory and base files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating requirements files..."
 cat > "${project_path}/${project_name}/requirements/base.in" << EOL
 # Main framework
-Django>=5.0,<5.1  # https://www.djangoproject.com/
+Django>=5.0,<5.1                # https://www.djangoproject.com/
 
-# PostgreSQL driver
-psycopg[c]>=3.2.6  # https://github.com/psycopg/psycopg (supports C bindings for performance)
+# Database
+psycopg[c]>=3.2.6               # https://github.com/psycopg/psycopg (C bindings for performance)
 
-# Environment variables management
-django-environ>=0.12.0  # https://github.com/joke2k/django-environ
+# Configuration
+django-environ>=0.12.0          # https://github.com/joke2k/django-environ
 
-# WSGI server
-gunicorn>=23.0.0  # https://github.com/benoitc/gunicorn
+# Deployment
+gunicorn>=23.0.0                # https://github.com/benoitc/gunicorn
 
 # Templating
-jinja2>=3.1.2  # https://github.com/pallets/jinja (Jinja2 templating engine)
+jinja2>=3.1.2                   # https://github.com/pallets/jinja
 
-# Authentication
-django-allauth[mfa]>=65.4.1  # https://github.com/pennersr/django-allauth (authentication, MFA support)
+# Authentication & Security
+django-allauth[mfa]>=65.4.1     # https://github.com/pennersr/django-allauth (MFA support)
+django-recaptcha==4.1.0         # https://github.com/torchbox/django-recaptcha
 EOL
 
 cat > "${project_path}/${project_name}/requirements/local.in" << EOL
 -r base.in
 
 # Development tools
-ipython>=8.14.0  # https://github.com/ipython/ipython
-django-debug-toolbar>=5.1.0  # https://github.com/jazzband/django-debug-toolbar
-django-extensions>=3.2.3  # https://github.com/django-extensions/django-extensions
+ipython>=8.14.0                 # https://github.com/ipython/ipython
+django-debug-toolbar>=5.1.0     # https://github.com/jazzband/django-debug-toolbar
+django-extensions>=3.2.3        # https://github.com/django-extensions/django-extensions
 
 # Code quality
-ruff>=0.11.2  # https://github.com/astral-sh/ruff (modern linter and formatter)
-coverage>=7.7.1  # https://github.com/nedbat/coveragepy (test coverage)
-pre-commit>=3.6.0  # https://github.com/pre-commit/pre-commit (git hook framework)
-mypy>=1.15.0  # https://github.com/python/mypy (static type checking)
-django-stubs>=5.1.3  # https://github.com/typeddjango/django-stubs (type hints for Django)
-djlint>=1.34.1  # https://github.com/Riverside-Healthcare/djlint (linter/formatter for Jinja2 templates)
+ruff>=0.11.2                    # https://github.com/astral-sh/ruff
+coverage>=7.7.1                 # https://github.com/nedbat/coveragepy
+pre-commit>=3.6.0               # https://github.com/pre-commit/pre-commit
+mypy>=1.15.0                    # https://github.com/python/mypy
+django-stubs>=5.1.3             # https://github.com/typeddjango/django-stubs
+djlint>=1.34.1                  # https://github.com/Riverside-Healthcare/djlint
 
 # Testing
-pytest>=8.3.5  # https://github.com/pytest-dev/pytest
-pytest-django>=4.10.0  # https://github.com/pytest-dev/pytest-django
-factory-boy>=3.3.2  # https://github.com/FactoryBoy/factory_boy (fixtures for testing)
+pytest>=8.3.5                   # https://github.com/pytest-dev/pytest
+pytest-django>=4.10.0           # https://github.com/pytest-dev/pytest-django
+factory-boy>=3.3.2              # https://github.com/FactoryBoy/factory_boy
 EOL
 
 cat > "${project_path}/${project_name}/requirements/production.in" << EOL
 -r base.in
 
 # Security
-argon2-cffi>=23.1.0  # https://github.com/hynek/argon2_cffi (password hashing)
+argon2-cffi>=23.1.0             # https://github.com/hynek/argon2_cffi (password hashing)
 
 # Caching
-django-redis>=5.4.0  # https://github.com/jazzband/django-redis (Redis caching)
+django-redis>=5.4.0             # https://github.com/jazzband/django-redis (Redis caching)
 
 # Performance
-django-storages[s3]>=1.14.5  # https://github.com/jschneier/django-storages (S3 storage)
-whitenoise>=6.8.0  # https://github.com/evansd/whitenoise (static file serving)
+django-storages[s3]>=1.14.5     # https://github.com/jschneier/django-storages (S3 storage)
+whitenoise>=6.8.0               # https://github.com/evansd/whitenoise (static files)
 
 # Monitoring
-sentry-sdk>=2.0.0  # https://github.com/getsentry/sentry-python (error tracking)
+sentry-sdk>=2.0.0               # https://github.com/getsentry/sentry-python (error tracking)
 EOL
 
 # Create log files with proper permissions
@@ -1478,14 +1487,12 @@ fi
 if [ "$environment" = "local" ]; then
     echo -e "\e[38;5;72m[INFO]\e[0m Collecting static files..."
     source "$venv_path/bin/activate"
-    sudo chown "${USER}:${USER}" "${project_path}/${project_name}/staticfiles"
     python "${project_path}/${project_name}/manage.py" collectstatic --noinput
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files."
         deactivate
         exit 1
     fi
-    sudo chown -R www-data:www-data "${project_path}/${project_name}/staticfiles"
     deactivate
 fi
 
