@@ -128,15 +128,18 @@ psycopg[c]>=3.2.6               # https://github.com/psycopg/psycopg (C bindings
 # Configuration
 django-environ>=0.12.0          # https://github.com/joke2k/django-environ
 
+# HTTP requests
+requests>=2.31.0                # https://github.com/psf/requests
+
 # Deployment
 gunicorn>=23.0.0                # https://github.com/benoitc/gunicorn
 
 # Templating
 jinja2>=3.1.2                   # https://github.com/pallets/jinja
+django-jinja>=2.10.3            # https://github.com/niwinz/django-jinja
 
-# Authentication & Security
+# Authentication
 django-allauth[mfa]>=65.4.1     # https://github.com/pennersr/django-allauth (MFA support)
-django-recaptcha==4.1.0         # https://github.com/torchbox/django-recaptcha
 EOL
 
 cat > "${project_path}/${project_name}/requirements/local.in" << EOL
@@ -1274,7 +1277,7 @@ LOGGING = {
             'stream': sys.stdout,
         },
         'file': {
-            'level': 'DEBUG',
+            'level': 'INFO',
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'log/django.log',
             'formatter': 'verbose',
