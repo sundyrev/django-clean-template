@@ -335,8 +335,8 @@ The project uses `uv` for fast and reliable dependency management, offering sign
 - **`gunicorn.sh`**:
 
   - Runs Gunicorn manually for debugging or development without Systemd.
-  - Supports the `--project` parameter to specify the project name (e.g., `--project nowknow`). If not provided, it prompts for the project name and path.
-  - If a corresponding environment variable (e.g., `NOWKNOW_PATH`) is set, it uses that path; otherwise, it prompts for the path.
+  - Supports the `--project` parameter to specify the project name (e.g., `--project <project_name>`). If not provided, it prompts for the project name and path.
+  - If a corresponding environment variable (e.g., `PROJECT_NAME_PATH`) is set, it uses that path; otherwise, it prompts for the path.
   - Usage:
 
     ```zsh
@@ -352,8 +352,8 @@ The project uses `uv` for fast and reliable dependency management, offering sign
 - **`runserver.sh`**:
 
   - Starts the Django development server for quick testing.
-  - Supports the `--project` parameter to specify the project name (e.g., `--project nowknow`). If not provided, it prompts for the project name and path.
-  - If a corresponding environment variable (e.g., `NOWKNOW_PATH`) is set, it uses that path; otherwise, it prompts for the path.
+  - Supports the `--project` parameter to specify the project name (e.g., `--project <project_name>`). If not provided, it prompts for the project name and path.
+  - If a corresponding environment variable (e.g., `PROJECT_NAME_PATH`) is set, it uses that path; otherwise, it prompts for the path.
   - Usage:
 
     ```zsh
@@ -368,14 +368,14 @@ The project uses `uv` for fast and reliable dependency management, offering sign
 
 - **Setting up environment variables for helper scripts**:
 
-  To streamline usage of `gunicorn.sh` and `runserver.sh`, you can set an environment variable for your project's path. For example, to set the path for a project named `nowknow`:
+  To streamline usage of `gunicorn.sh` and `runserver.sh`, you can set an environment variable for your project's path. For example, to set the path for a project named `<project_name>`:
 
   ```zsh
-  echo 'export NOWKNOW_PATH="$HOME/projects/nowknowApp"' >> ~/.zshrc
+  echo 'export PROJECT_NAME_PATH="$HOME/projects/<project_directory>"' >> ~/.zshrc
   source ~/.zshrc
   ```
 
-  This ensures the `NOWKNOW_PATH` variable is available in every new terminal session, allowing the scripts to automatically use the specified path when `--project nowknow` is provided. Replace `nowknowApp` with your actual project directory name.
+  This ensures the `PROJECT_NAME_PATH` variable is available in every new terminal session, allowing the scripts to automatically use the specified path when `--project <project_name>` is provided. Replace `<project_directory>` with your actual project directory name.
 
 ## Docker Deployment
 
