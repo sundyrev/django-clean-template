@@ -86,7 +86,7 @@ mkdir -m 755 -p \
     "${project_path}/conf/nginx/"{local,docker} \
     "${project_path}/conf/"{gunicorn,env_vars,redis} \
     "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
-    "${project_path}/${project_name}/static/"{css,js,images,admin} \
+    "${project_path}/${project_name}/static/"{css,js,images,admin,dist} \
     "${project_path}/${project_name}/media/uploads"
 
 # Set ownership for web server directories
@@ -94,12 +94,14 @@ sudo chown -R www-data:www-data \
     "${project_path}/log" \
     "${project_path}/conf" \
     "${project_path}/${project_name}/staticfiles" \
+    "${project_path}/${project_name}/static/dist" \
     "${project_path}/${project_name}/media"
 
 # Set base permissions
 sudo chmod -R 755 "${project_path}/conf"
 sudo chmod -R 775 "${project_path}/log"
 sudo chmod -R 775 "${project_path}/${project_name}/media"
+sudo chmod -R 775 "${project_path}/${project_name}/static/dist"
 if [ "$environment" = "local" ]; then
     sudo chmod -R 775 "${project_path}/${project_name}/staticfiles"
 else
@@ -110,6 +112,7 @@ fi
 sudo find "${project_path}/conf" -type f -exec chmod 644 {} \;
 sudo find "${project_path}/log" -type f -exec chmod 664 {} \;
 sudo find "${project_path}/${project_name}/media" -type f -exec chmod 664 {} \;
+sudo find "${project_path}/${project_name}/static/dist" -type f -exec chmod 664 {} \;
 if [ "$environment" = "local" ]; then
     sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 664 {} \;
 else
