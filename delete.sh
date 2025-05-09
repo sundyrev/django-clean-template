@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# ============================================
+# Script to delete a Django project
+# ============================================
+# This script deletes a Django project, including its folder, virtual environment,
+# PostgreSQL database and user, Gunicorn service/socket, and Nginx configuration.
+# It supports a local mode (--local) to skip server-related operations. All actions
+# are logged to a timestamped file, and user confirmation is required for critical steps.
+
+# Usage: delete.sh [--local] [--project PROJECT_NAME]
+#   --local: Skip Gunicorn and Nginx operations for local development
+#   --project PROJECT_NAME: Name of the Django project folder (prompted if not specified)
+
 # Initialize variables
 project_name=""
 project_path=""

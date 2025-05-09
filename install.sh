@@ -1,6 +1,19 @@
 #!/bin/bash
 set -e
 
+# ============================================
+# Script to initialize a Django project
+# ============================================
+# This script sets up a Django project with a predefined structure, installs
+# dependencies, configures PostgreSQL, Gunicorn, Nginx, and Docker, and initializes
+# a Git repository. It supports both local and production environments, prompted
+# via user input. The script creates configuration files, sets permissions, and
+# ensures a secure setup with tools like Ruff, djlint, and pre-commit.
+
+# Usage: ./install.sh
+# No arguments are required; the script prompts for project domain, name, and
+# environment (local or production).
+
 # Check if pyenv is installed
 if ! command -v pyenv &> /dev/null; then
     echo -e "\e[38;5;196m[ERROR]\e[0m pyenv is not installed. Please install it before proceeding."
@@ -171,6 +184,7 @@ cat > "${project_path}/${project_name}/requirements/production.in" << EOL
 argon2-cffi>=23.1.0             # https://github.com/hynek/argon2_cffi (password hashing)
 
 # Caching
+redis>=5.0.0                    # https://github.com/redis/redis-py (Redis client)
 django-redis>=5.4.0             # https://github.com/jazzband/django-redis (Redis caching)
 
 # Performance
@@ -481,7 +495,7 @@ cat > "${project_path}/docker/Dockerfile.django" << EOL
 # Stage 1: Base build stage
 FROM python:3.12-slim AS builder
 
-# Install build dependencies for psycopg[c] and uv
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     libpq-dev \\
     gcc \\
@@ -507,7 +521,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \\
 
 # Install runtime dependencies for psycopg
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    libpq5 \\
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create /app directory and set ownership
@@ -516,19 +530,18 @@ RUN mkdir -p /app && chown -R www-data:www-data /app
 # Set the working directory
 WORKDIR /app
 
-# Copy installed dependencies and binaries from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
-COPY --from=builder /usr/local/bin/ /usr/local/bin/
-COPY --from=builder /app /app
+COPY --from=builder --chown=www-data:www-data \\
+    /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY --from=builder --chown=www-data:www-data \\
+    /usr/local/bin/ /usr/local/bin/
+COPY --from=builder --chown=www-data:www-data \\
+    /app /app
 
 # Copy entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY --chown=www-data:www-data docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Switch to www-data user
 USER www-data
-
-# Start the application using Gunicorn
 ENTRYPOINT ["/entrypoint.sh"]
 EOL
 
@@ -997,38 +1010,6 @@ cd "${project_path}/${project_name}"
 echo -e "\e[38;5;72m[INFO]\e[0m Setting up applications directory..."
 touch "${project_path}/${project_name}/apps/__init__.py"
 
-# Create Jinja2 environment configuration
-echo -e "\e[38;5;72m[INFO]\e[0m Creating Jinja2 environment configuration..."
-cat <<EOF > "${project_path}/${project_name}/config/jinja2.py"
-from django.template.context_processors import csrf
-from django.templatetags.static import static
-from django.urls import reverse
-
-from jinja2 import Environment, select_autoescape
-
-
-def environment(**options):
-    """Configure and return a Jinja2 environment."""
-    options.pop('autoescape', None)
-    env = Environment(
-        autoescape=select_autoescape(
-            enabled_extensions=('html', 'j2'),
-            default_for_string=True,
-        ),
-        **options,
-    )
-
-    env.globals.update(
-        {
-            'static': static,
-            'url': reverse,
-            'csrf_token': csrf,
-        }
-    )
-
-    return env
-EOF
-
 # Create settings directory and split settings files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating settings directory and split settings files..."
 mkdir -m 755 -p config/settings
@@ -1091,11 +1072,32 @@ ROOT_URLCONF = 'config.urls'
 # Template engines - Jinja2 and Django templates configuration
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.jinja2.Jinja2',
+        'BACKEND': 'django_jinja.backend.Jinja2',
         'DIRS': [BASE_DIR / '${project_name}/jinja2'],
         'APP_DIRS': True,
         'OPTIONS': {
-            'environment': 'config.jinja2.environment',
+            'match_extension': '.j2',
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.csrf',
+            ],
+            'extensions': [
+                'django_jinja.builtins.extensions.DjangoFiltersExtension',
+                'django_jinja.builtins.extensions.CsrfExtension',  # For proper csrf_token work
+                'django_jinja.builtins.extensions.StaticFilesExtension',  # For static
+                'django_jinja.builtins.extensions.UrlsExtension',  # For url
+                'django_jinja.builtins.extensions.TimezoneExtension',  # For timezone support
+                'django_jinja.builtins.extensions.DjangoExtraFiltersExtension',  # Additional Django filters
+                'jinja2.ext.i18n',  # For internationalization
+                'jinja2.ext.loopcontrols',  # For break/continue in loops
+            ],
+            'trim_blocks': True,  # Removes first empty line after a block
+            'lstrip_blocks': True,  # Removes spaces and tabs at the beginning of a line before a block
+            'auto_reload': env.bool('DEBUG', default=True),  # Automatic template reloading during debugging mode
+            'newstyle_gettext': True,  # New style gettext for internationalization
         },
     },
     {
@@ -1497,6 +1499,10 @@ if [ "$environment" = "local" ]; then
         exit 1
     fi
     deactivate
+    echo -e "\e[38;5;72m[INFO]\e[0m Setting correct ownership for static files..."
+    sudo chown -R www-data:www-data "${project_path}/${project_name}/staticfiles"
+    sudo chmod -R 775 "${project_path}/${project_name}/staticfiles"
+    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 664 {} \;
 fi
 
 # Configure Gunicorn
