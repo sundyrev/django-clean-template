@@ -1,6 +1,17 @@
 #!/bin/bash
 set -e
 
+# ============================================
+# Script to manage Gunicorn service
+# ============================================
+# This script stops the Django development server (if running) and starts
+# the Gunicorn service for the specified Django project. It ensures the
+# project directory exists and the Gunicorn service is properly configured
+# before starting.
+
+# Usage: gunicorn.sh [--project PROJECT_NAME]
+#   --project PROJECT_NAME: Name of the Django project folder
+
 # Function to display usage information
 usage() {
     echo "Usage: $0 [--project PROJECT_NAME]"

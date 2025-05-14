@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# ============================================
+# Script to run Django development server
+# ============================================
+# This script stops the Gunicorn service and socket (if running), activates
+# the project's virtual environment, and starts the Django development server
+# for the specified project. It ensures the project directory and virtual
+# environment exist before proceeding.
+
+# Usage: runserver.sh [--project PROJECT_NAME]
+#   --project PROJECT_NAME: Name of the Django project folder
+
+# Function to display usage information
 usage() {
     echo "Usage: $0 [--project PROJECT_NAME]"
     echo "  --project  Project name. If not specified, it will be prompted from the user."

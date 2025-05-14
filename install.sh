@@ -1,9 +1,30 @@
 #!/bin/bash
 set -e
 
-# Check if pyenv is installed
-if ! command -v pyenv &> /dev/null; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m pyenv is not installed. Please install it before proceeding."
+# ============================================
+# Script to initialize a Django project
+# ============================================
+# This script sets up a Django project with a predefined structure, installs
+# dependencies using uv, configures PostgreSQL, Gunicorn, Nginx, and Docker, and
+# initializes a Git repository. It supports both local and production environments,
+# prompted via user input. The script creates configuration files, sets permissions,
+# and ensures a secure setup with tools like Ruff, djlint, and pre-commit. Assumes
+# uv is installed globally and Python 3.12 is pinned with `uv python pin 3.12`.
+
+# Usage: ./install.sh
+# No arguments are required; the script prompts for project domain, name, and
+# environment (local or production).
+
+# Check if python3 is installed
+if ! command -v python3 &> /dev/null; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Python3 is not installed or not found in PATH. Please install Python 3.12 and ensure it is accessible as 'python3'."
+    exit 1
+fi
+
+# Check Python version
+python_version=$(python3 --version | grep -oP '\d+\.\d+')
+if [ "$python_version" != "3.12" ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Python 3.12 is required, found $python_version."
     exit 1
 fi
 
@@ -23,6 +44,12 @@ environment=""
 read -e -p $'\e[38;5;117m[1/3]\e[0m Your domain without protocol \e[38;5;223m(e.g., example.com)\e[0m: ' project_domain
 read -e -p $'\e[38;5;117m[2/3]\e[0m Project name: ' project_name
 
+# Validate project name format using regex pattern
+if ! [[ "$project_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Project name must contain only letters, numbers, hyphens, or underscores."
+    exit 1
+fi
+
 # Environment selection with validation
 echo -e "\e[38;5;117m[3/3]\e[0m Select environment:"
 echo $'\e[38;5;207m1\e[0m - Development'
@@ -37,6 +64,7 @@ while true; do
             ;;
         2)
             environment="production"
+            project_path="/opt/${project_name}App"
             break
             ;;
         *)
@@ -49,9 +77,9 @@ done
 if [ "$environment" = "local" ]; then
     venv_path="${project_path}/env"
 else
-    venv_path="/opt/${project_name}/env"
-    sudo mkdir -p "/opt/${project_name}"
-    sudo chown www-data:www-data "/opt/${project_name}"
+    venv_path="${project_path}/env"
+    sudo mkdir -m 755 -p "${project_path}"
+    sudo chown www-data:www-data "${project_path}"
 fi
 
 # Install necessary packages
@@ -70,7 +98,6 @@ if [ $? -ne 0 ]; then
 fi
 
 # Check if the current user is in the www-data group
-# This is useful for ensuring proper permissions for web server-related tasks
 if ! groups "${USER}" | grep -qw 'www-data'; then
     echo -e "\e[38;5;208m[WARNING]\e[0m User ${USER} is not in the www-data group. Adding user..."
     sudo usermod -aG www-data "${USER}"
@@ -80,45 +107,60 @@ fi
 
 # Create the directory structure
 echo -e "\e[38;5;72m[INFO]\e[0m Creating project directory structure..."
-mkdir -m 755 -p \
-    "${project_path}/docker" \
-    "${project_path}/log/nginx" \
-    "${project_path}/conf/nginx/"{local,docker} \
-    "${project_path}/conf/"{gunicorn,env_vars,redis} \
-    "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
-    "${project_path}/${project_name}/static/"{css,js,images,admin} \
-    "${project_path}/${project_name}/media/uploads"
+if [ "$environment" = "local" ]; then
+    mkdir -m 755 -p \
+        "${project_path}/docker" \
+        "${project_path}/log/nginx" \
+        "${project_path}/conf/nginx/"{local,docker} \
+        "${project_path}/conf/"{gunicorn,env_vars,redis} \
+        "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
+        "${project_path}/${project_name}/static/"{css,js,images,admin} \
+        "${project_path}/${project_name}/media/uploads"
+else
+    sudo mkdir -m 755 -p \
+        "${project_path}/docker" \
+        "${project_path}/log/nginx" \
+        "${project_path}/conf/nginx/"{local,docker} \
+        "${project_path}/conf/"{gunicorn,env_vars,redis} \
+        "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
+        "${project_path}/${project_name}/static/"{css,js,images,admin} \
+        "${project_path}/${project_name}/media/uploads"
+fi
 
 # Set ownership for web server directories
-sudo chown -R www-data:www-data \
-    "${project_path}/log" \
-    "${project_path}/conf" \
-    "${project_path}/${project_name}/staticfiles" \
-    "${project_path}/${project_name}/media"
+if [ "$environment" = "local" ]; then
+    chown -R "${USER}:www-data" "${project_path}"
+else
+    sudo chown -R www-data:www-data "${project_path}"
+fi
 
 # Set base permissions
-sudo chmod -R 755 "${project_path}/conf"
-sudo chmod -R 775 "${project_path}/log"
-sudo chmod -R 775 "${project_path}/${project_name}/media"
 if [ "$environment" = "local" ]; then
-    sudo chmod -R 775 "${project_path}/${project_name}/staticfiles"
+    chmod -R 755 "${project_path}/conf"
+    chmod -R 775 "${project_path}/log"
+    chmod -R 775 "${project_path}/docker"
+    chmod -R 775 "${project_path}/${project_name}/"{requirements,media,staticfiles}
 else
-    sudo chmod -R 755 "${project_path}/${project_name}/staticfiles"
+    sudo chmod -R 755 "${project_path}/conf"
+    sudo chmod -R 775 "${project_path}/log"
+    sudo chmod -R 755 "${project_path}/docker"
+    sudo chmod -R 775 "${project_path}/${project_name}/media"
+    sudo chmod -R 755 "${project_path}/${project_name}/"{requirements,staticfiles}
 fi
 
-# Set specific permissions
-sudo find "${project_path}/conf" -type f -exec chmod 644 {} \;
-sudo find "${project_path}/log" -type f -exec chmod 664 {} \;
-sudo find "${project_path}/${project_name}/media" -type f -exec chmod 664 {} \;
+# Set specific permissions for files
 if [ "$environment" = "local" ]; then
-    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 664 {} \;
+    find "${project_path}/conf" -type f -exec chmod 644 {} \;
+    find "${project_path}/"{log,docker,${project_name}/requirements,${project_name}/media,${project_name}/staticfiles} -type f -exec chmod 664 {} \;
 else
-    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
+    sudo find "${project_path}/conf" -type f -exec chmod 644 {} \;
+    sudo find "${project_path}/"{log,${project_name}/media} -type f -exec chmod 664 {} \;
+    sudo find "${project_path}/"{docker,${project_name}/requirements,${project_name}/staticfiles} -type f -exec chmod 644 {} \;
 fi
 
-# Create requirements directory and base files
+# Create requirements files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating requirements files..."
-cat > "${project_path}/${project_name}/requirements/base.in" << EOL
+base_in_content=$(cat << EOL
 # Main framework
 Django>=5.0,<5.1                # https://www.djangoproject.com/
 
@@ -141,8 +183,14 @@ django-jinja>=2.10.3            # https://github.com/niwinz/django-jinja
 # Authentication
 django-allauth[mfa]>=65.4.1     # https://github.com/pennersr/django-allauth (MFA support)
 EOL
+)
+if [ "$environment" = "local" ]; then
+    echo "$base_in_content" > "${project_path}/${project_name}/requirements/base.in"
+else
+    echo "$base_in_content" | sudo tee "${project_path}/${project_name}/requirements/base.in" > /dev/null
+fi
 
-cat > "${project_path}/${project_name}/requirements/local.in" << EOL
+local_in_content=$(cat << EOL
 -r base.in
 
 # Development tools
@@ -163,14 +211,21 @@ pytest>=8.3.5                   # https://github.com/pytest-dev/pytest
 pytest-django>=4.10.0           # https://github.com/pytest-dev/pytest-django
 factory-boy>=3.3.2              # https://github.com/FactoryBoy/factory_boy
 EOL
+)
+if [ "$environment" = "local" ]; then
+    echo "$local_in_content" > "${project_path}/${project_name}/requirements/local.in"
+else
+    echo "$local_in_content" | sudo tee "${project_path}/${project_name}/requirements/local.in" > /dev/null
+fi
 
-cat > "${project_path}/${project_name}/requirements/production.in" << EOL
+production_in_content=$(cat << EOL
 -r base.in
 
 # Security
 argon2-cffi>=23.1.0             # https://github.com/hynek/argon2_cffi (password hashing)
 
 # Caching
+redis>=5.0.0                    # https://github.com/redis/redis-py (Redis client)
 django-redis>=5.4.0             # https://github.com/jazzband/django-redis (Redis caching)
 
 # Performance
@@ -180,6 +235,12 @@ whitenoise>=6.8.0               # https://github.com/evansd/whitenoise (static f
 # Monitoring
 sentry-sdk>=2.0.0               # https://github.com/getsentry/sentry-python (error tracking)
 EOL
+)
+if [ "$environment" = "local" ]; then
+    echo "$production_in_content" > "${project_path}/${project_name}/requirements/production.in"
+else
+    echo "$production_in_content" | sudo tee "${project_path}/${project_name}/requirements/production.in" > /dev/null
+fi
 
 # Create log files with proper permissions
 sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/access.log"
@@ -189,65 +250,64 @@ sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/djang
 
 # Create pyproject.toml for Ruff configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating pyproject.toml for Ruff configuration..."
-install -m 644 /dev/null "${project_path}/pyproject.toml"
-cat > "${project_path}/pyproject.toml" << EOL
+pyproject_content=$(cat << EOL
 [tool.ruff]
-src = ["${project_name}"]                   # Project root directory
-line-length = 88                            # Maximum line length
-target-version = "py312"                    # Target Python version
+src = ["${project_name}"]
+line-length = 88
+target-version = "py312"
 exclude = [
-    "${project_name}/config/asgi.py",       # Exclude ASGI configuration
-    "${project_name}/config/wsgi.py",       # Exclude WSGI configuration
-    "${project_name}/manage.py",            # Exclude manage.py
-    "${project_name}/**/migrations/*",      # Exclude migrations
-    "${project_name}/**/tests/*",           # Exclude tests
-    "${project_name}/static/**/*",          # Exclude static files
-    "**/__pycache__/",                      # Exclude Python cache
-    "**/*.pyc",                             # Exclude compiled Python files
-    "**/*.j2",                              # Exclude Jinja2 templates
+    "${project_name}/config/asgi.py",
+    "${project_name}/config/wsgi.py",
+    "${project_name}/manage.py",
+    "${project_name}/**/migrations/*",
+    "${project_name}/**/tests/*",
+    "${project_name}/static/**/*",
+    "**/__pycache__/",
+    "**/*.pyc",
+    "**/*.j2",
 ]
 
 [tool.ruff.lint]
 select = [
-    "E", "F", "W", "I",                     # PEP 8, Pyflakes, isort
-    "DJ", "UP", "RUF",                      # Django, pyupgrade, Ruff-specific
-    "D", "C90", "N",                        # Docstring, complexity, PEP 8 naming
-    "S", "B", "A",                          # Security, bugbear, builtins
-    "C4",                                   # Comprehensions
-    "DTZ",                                  # Datetime
-    "T10", "PERF"                           # Debug calls, performance
+    "E", "F", "W", "I",
+    "DJ", "UP", "RUF",
+    "D", "C90", "N",
+    "S", "B", "A",
+    "C4",
+    "DTZ",
+    "T10", "PERF"
 ]
 ignore = [
-    "E501",                                 # Line too long
-    "D100",                                 # Missing module docstring
-    "D104",                                 # Missing package docstring
-    "D212",                                 # Conflicts with D211
-    "D203",                                 # Conflicts with D211
-    "S101"                                  # Assert usage
+    "E501",
+    "D100",
+    "D104",
+    "D212",
+    "D203",
+    "S101"
 ]
 fixable = [
-    "E", "F", "W", "I", "UP", "RUF", "C4", "T10"  # Rules that Ruff can auto-fix
+    "E", "F", "W", "I", "UP", "RUF", "C4", "T10"
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"${project_name}/config/settings/local.py" = ["F403", "F405"]       # Ignore * imports
-"${project_name}/config/settings/production.py" = ["F403", "F405"]  # Ignore * imports
+"${project_name}/config/settings/local.py" = ["F403", "F405"]
+"${project_name}/config/settings/production.py" = ["F403", "F405"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["${project_name}"]  # Custom modules
+known-first-party = ["${project_name}"]
 
 [tool.ruff.lint.pydocstyle]
-convention = "google"                       # Docstring style
+convention = "google"
 
 [tool.ruff.format]
-quote-style = "single"                      # Single quotes
-indent-style = "space"                      # Space indentation
+quote-style = "single"
+indent-style = "space"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "--ds=${project_name}.config.settings.test --import-mode=importlib"
 python_files = ["tests.py", "test_*.py"]
-DJANGO_SETTINGS_MODULE = "${project_name}.config.settings.test"  # Test settings
+DJANGO_SETTINGS_MODULE = "${project_name}.config.settings.test"
 
 [tool.mypy]
 python_version = "3.12"
@@ -256,26 +316,33 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unused_configs = true
 plugins = ["mypy_django_plugin.main"]
-disallow_untyped_defs = true  # Strict type checking
+disallow_untyped_defs = true
 
 [tool.mypy.overrides]
 module = [
-    "${project_name}.*.migrations.*",       # Ignore migrations
-    "allauth.*"                             # Ignore django-allauth
+    "${project_name}.*.migrations.*",
+    "allauth.*"
 ]
 ignore_errors = true
 
 [tool.django-stubs]
-django_settings_module = "${project_name}.config.settings"  # Settings for django-stubs
+django_settings_module = "${project_name}.config.settings"
 
 [tool.ruff.lint.mccabe]
-max-complexity = 12                         # Cyclomatic complexity limit
+max-complexity = 12
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/pyproject.toml"
+    echo "$pyproject_content" > "${project_path}/pyproject.toml"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/pyproject.toml"
+    echo "$pyproject_content" | sudo tee "${project_path}/pyproject.toml" > /dev/null
+fi
 
 # Create .djlintrc for djlint configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating .djlintrc for djlint configuration..."
-install -m 644 /dev/null "${project_path}/.djlintrc"
-cat > "${project_path}/.djlintrc" << EOL
+djlintrc_content=$(cat << EOL
 {
     "profile": "jinja",
     "extension": "j2",
@@ -284,11 +351,18 @@ cat > "${project_path}/.djlintrc" << EOL
     "max_line_length": 88
 }
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/.djlintrc"
+    echo "$djlintrc_content" > "${project_path}/.djlintrc"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/.djlintrc"
+    echo "$djlintrc_content" | sudo tee "${project_path}/.djlintrc" > /dev/null
+fi
 
 # Create .pre-commit-config.yaml for pre-commit hooks
 echo -e "\e[38;5;72m[INFO]\e[0m Creating .pre-commit-config.yaml for pre-commit hooks..."
-install -m 644 /dev/null "${project_path}/.pre-commit-config.yaml"
-cat > "${project_path}/.pre-commit-config.yaml" << EOL
+pre_commit_content=$(cat << EOL
 exclude: '^${project_name}/static/.*|.*/migrations/.*|.*/__pycache__/.*'
 default_stages: [pre-commit]
 minimum_pre_commit_version: "3.2.0"
@@ -321,22 +395,36 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/.pre-commit-config.yaml"
+    echo "$pre_commit_content" > "${project_path}/.pre-commit-config.yaml"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/.pre-commit-config.yaml"
+    echo "$pre_commit_content" | sudo tee "${project_path}/.pre-commit-config.yaml" > /dev/null
+fi
 
 # Create pytest.ini for pytest configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating pytest.ini for pytest configuration..."
-install -m 644 /dev/null "${project_path}/pytest.ini"
-cat > "${project_path}/pytest.ini" << EOL
+pytest_ini_content=$(cat << EOL
 [pytest]
 DJANGO_SETTINGS_MODULE = config.settings.local
 python_files = tests.py test_*.py
 addopts = --strict-markers --tb=short --capture=no
 log_level = WARNING
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/pytest.ini"
+    echo "$pytest_ini_content" > "${project_path}/pytest.ini"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/pytest.ini"
+    echo "$pytest_ini_content" | sudo tee "${project_path}/pytest.ini" > /dev/null
+fi
 
 # Create .coveragerc for coverage configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating .coveragerc for coverage configuration..."
-install -m 644 /dev/null "${project_path}/.coveragerc"
-cat > "${project_path}/.coveragerc" << EOL
+coveragerc_content=$(cat << EOL
 [run]
 # Only measure files under the "${project_name}" package
 source = ${project_name}
@@ -366,11 +454,19 @@ exclude_lines =
     pragma: no cover
     if __name__ == '__main__':
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/.coveragerc"
+    echo "$coveragerc_content" > "${project_path}/.coveragerc"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/.coveragerc"
+    echo "$coveragerc_content" | sudo tee "${project_path}/.coveragerc" > /dev/null
+fi
 
 # Create Redis configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating Redis configuration file..."
 sudo install -o www-data -g www-data -m 644 /dev/null "${project_path}/conf/redis/redis.conf"
-cat << EOL | sudo tee "${project_path}/conf/redis/redis.conf" > /dev/null
+sudo tee "${project_path}/conf/redis/redis.conf" > /dev/null << EOL
 # Redis configuration file
 # This is a basic configuration for development/testing.
 # Adjust settings (e.g., maxmemory, requirepass) before production use.
@@ -402,8 +498,7 @@ EOL
 
 # Create Docker files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating Docker configuration files..."
-install -m 664 /dev/null "${project_path}/docker-compose.yml"
-cat > "${project_path}/docker-compose.yml" << EOL
+docker_compose_content=$(cat << EOL
 services:
   django:
     container_name: django
@@ -475,13 +570,20 @@ networks:
   backend:
     name: ${project_name}_backend
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 664 /dev/null "${project_path}/docker-compose.yml"
+    echo "$docker_compose_content" > "${project_path}/docker-compose.yml"
+else
+    sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/docker-compose.yml"
+    echo "$docker_compose_content" | sudo tee "${project_path}/docker-compose.yml" > /dev/null
+fi
 
-install -m 664 /dev/null "${project_path}/docker/Dockerfile.django"
-cat > "${project_path}/docker/Dockerfile.django" << EOL
+dockerfile_django_content=$(cat << EOL
 # Stage 1: Base build stage
 FROM python:3.12-slim AS builder
 
-# Install build dependencies for psycopg[c] and uv
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     libpq-dev \\
     gcc \\
@@ -516,24 +618,30 @@ RUN mkdir -p /app && chown -R www-data:www-data /app
 # Set the working directory
 WORKDIR /app
 
-# Copy installed dependencies and binaries from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
-COPY --from=builder /usr/local/bin/ /usr/local/bin/
-COPY --from=builder /app /app
+COPY --from=builder --chown=www-data:www-data \\
+    /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY --from=builder --chown=www-data:www-data \\
+    /usr/local/bin/ /usr/local/bin/
+COPY --from=builder --chown=www-data:www-data \\
+    /app /app
 
 # Copy entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY --chown=www-data:www-data docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Switch to www-data user
 USER www-data
-
-# Start the application using Gunicorn
 ENTRYPOINT ["/entrypoint.sh"]
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 664 /dev/null "${project_path}/docker/Dockerfile.django"
+    echo "$dockerfile_django_content" > "${project_path}/docker/Dockerfile.django"
+else
+    sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/docker/Dockerfile.django"
+    echo "$dockerfile_django_content" | sudo tee "${project_path}/docker/Dockerfile.django" > /dev/null
+fi
 
-install -m 664 /dev/null "${project_path}/docker/Dockerfile.nginx"
-cat > "${project_path}/docker/Dockerfile.nginx" << EOL
+dockerfile_nginx_content=$(cat << EOL
 FROM nginx:stable-alpine
 
 # Copy the main nginx configuration file
@@ -557,16 +665,23 @@ USER nginx
 # Expose ports 80 (HTTP) and 443 (HTTPS) for nginx access
 EXPOSE 80 443
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 664 /dev/null "${project_path}/docker/Dockerfile.nginx"
+    echo "$dockerfile_nginx_content" > "${project_path}/docker/Dockerfile.nginx"
+else
+    sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/docker/Dockerfile.nginx"
+    echo "$dockerfile_nginx_content" | sudo tee "${project_path}/docker/Dockerfile.nginx" > /dev/null
+fi
 
-install -m 755 /dev/null "${project_path}/docker/entrypoint.sh"
-cat > "${project_path}/docker/entrypoint.sh" << EOL
+entrypoint_content=$(cat << EOL
 #!/bin/sh
 
 echo "Applying database migrations..."
-python ${project_name}/manage.py migrate --noinput || { echo "Migration failed"; exit 1; }
+python3 ${project_name}/manage.py migrate --noinput || { echo "Migration failed"; exit 1; }
 
 echo "Collecting static files..."
-python ${project_name}/manage.py collectstatic --noinput || { echo "Collectstatic failed"; exit 1; }
+python3 ${project_name}/manage.py collectstatic --noinput || { echo "Collectstatic failed"; exit 1; }
 
 echo "Starting Gunicorn..."
 exec gunicorn --chdir ${project_name} config.wsgi:application \\
@@ -578,11 +693,17 @@ exec gunicorn --chdir ${project_name} config.wsgi:application \\
     --error-logfile - \\
     --log-level info
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 755 /dev/null "${project_path}/docker/entrypoint.sh"
+    echo "$entrypoint_content" > "${project_path}/docker/entrypoint.sh"
+else
+    sudo install -m 755 -o www-data -g www-data /dev/null "${project_path}/docker/entrypoint.sh"
+    echo "$entrypoint_content" | sudo tee "${project_path}/docker/entrypoint.sh" > /dev/null
+fi
 
 # Configure environment variables
 echo -e "\e[38;5;72m[INFO]\e[0m Configuring environment variables..."
-
-# Create local environment file with proper permissions
 sudo install -o www-data -g www-data -m 644 /dev/null "${project_path}/conf/env_vars/local.env"
 cat << EOL | sudo tee "${project_path}/conf/env_vars/local.env" > /dev/null
 DEBUG=True
@@ -594,8 +715,7 @@ DJANGO_SETTINGS_MODULE=config.settings.local
 DATABASE_URL=postgres://${project_name}_user:${project_name}_password@localhost:5432/${project_name}_db
 EOL
 
- # Create production environment file with proper permissions
- sudo install -o www-data -g www-data -m 644 /dev/null "${project_path}/conf/env_vars/production.env"
+sudo install -o www-data -g www-data -m 644 /dev/null "${project_path}/conf/env_vars/production.env"
 cat << EOL | sudo tee "${project_path}/conf/env_vars/production.env" > /dev/null
 DEBUG=False
 SECRET_KEY=
@@ -618,7 +738,6 @@ EOL
 
 # Create PostgreSQL user and database
 echo -e "\e[38;5;72m[INFO]\e[0m Creating PostgreSQL user and database..."
-# Create user using PL/pgSQL
 sudo -u postgres psql -q <<EOF
 DO \$\$
 BEGIN
@@ -643,7 +762,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Check if the database exists and create it if it doesn't
 if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw "${project_name}_db"; then
     sudo -u postgres psql -q -c "CREATE DATABASE ${project_name}_db WITH OWNER ${project_name}_user;"
     if [ $? -ne 0 ]; then
@@ -655,7 +773,6 @@ else
     echo -e "\e[38;5;208m[WARNING]\e[0m Database ${project_name}_db already exists. Skipping creation."
 fi
 
-# Grant privileges
 sudo -u postgres psql -q -c "GRANT ALL PRIVILEGES ON DATABASE ${project_name}_db TO ${project_name}_user;"
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to grant privileges on database ${project_name}_db."
@@ -664,8 +781,7 @@ fi
 
 # Create .gitignore file
 echo -e "\e[38;5;72m[INFO]\e[0m Creating .gitignore file..."
-install -m 644 /dev/null "${project_path}/.gitignore"
-cat > "${project_path}/.gitignore" << EOL
+gitignore_content=$(cat << EOL
 install.sh
 
 # Python
@@ -768,10 +884,17 @@ log/
 jinja2/*.pyc
 jinja2/__pycache__/
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/.gitignore"
+    echo "$gitignore_content" > "${project_path}/.gitignore"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/.gitignore"
+    echo "$gitignore_content" | sudo tee "${project_path}/.gitignore" > /dev/null
+fi
 
 # Create .dockerignore file
-install -m 644 /dev/null "${project_path}/.dockerignore"
-cat > "${project_path}/.dockerignore" << EOL
+dockerignore_content=$(cat << EOL
 # Git
 .git
 .gitignore
@@ -873,6 +996,14 @@ conf/env_vars/*.env
 *.bak
 *.tmp
 EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/.dockerignore"
+    echo "$dockerignore_content" > "${project_path}/.dockerignore"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/.dockerignore"
+    echo "$dockerignore_content" | sudo tee "${project_path}/.dockerignore" > /dev/null
+fi
 
 # Check if uv is installed, install it if not
 if ! command -v uv &> /dev/null; then
@@ -882,84 +1013,130 @@ if ! command -v uv &> /dev/null; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install uv."
         exit 1
     fi
-    # Rehash pyenv to update PATH
-    pyenv rehash
     if ! command -v uv &> /dev/null; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m uv installed but not found in PATH. Ensure pyenv is configured correctly."
+        echo -e "\e[38;5;196m[ERROR]\e[0m uv installed but not found in PATH. Ensure PATH is configured correctly."
+        exit 1
+    fi
+fi
+
+# Determine the full path to uv
+uv_path=$(which uv)
+if [ -z "$uv_path" ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Could not determine the path to uv. Please ensure it is installed and accessible."
+    exit 1
+fi
+
+# Set up uv cache directory for production
+if [ "$environment" = "production" ]; then
+    uv_cache_path="${project_path}/.cache/uv"
+    echo -e "\e[38;5;72m[INFO]\e[0m Setting up uv cache directory at $uv_cache_path..."
+    sudo mkdir -m 755 -p "$uv_cache_path"
+    sudo chown -R www-data:www-data "${project_path}/.cache"
+    if [ $? -ne 0 ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create or set ownership for uv cache directory $uv_cache_path."
         exit 1
     fi
 fi
 
 # Set up Python virtual environment
-echo -e "\e[38;5;72m[INFO]\e[0m Setting up Python virtual environment at $venv_path..."
+echo -e "\e[38;5;72m[INFO]\e[0m Setting up Python virtual environment with uv at $venv_path..."
 if [ "$environment" = "local" ]; then
-    uv venv "$venv_path"
-    if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create development virtual environment."
-        exit 1
-    fi
+    "$uv_path" venv "$venv_path"
 else
-    sudo -u www-data uv venv "$venv_path"
-    if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create production virtual environment."
-        exit 1
-    fi
+    sudo -u www-data env uv_cache_path="${project_path}/.cache/uv" HOME="${project_path}" "$uv_path" venv "$venv_path"
+fi
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create virtual environment at $venv_path."
+    exit 1
 fi
 
-# Add DJANGO_SETTINGS_MODULE to the virtual environment's activate script (for development)
-if [ "$environment" = "local" ]; then
-    echo -e "\e[38;5;72m[INFO]\e[0m Adding DJANGO_SETTINGS_MODULE to activate script..."
-    echo "export DJANGO_SETTINGS_MODULE=config.settings.${environment}" >> "${venv_path}/bin/activate"
+# Verify virtual environment creation
+if [ ! -f "$venv_path/bin/python3" ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Virtual environment at $venv_path is incomplete or corrupted."
+    exit 1
 fi
 
-# Upgrade pip in the virtual environment
-echo -e "\e[38;5;72m[INFO]\e[0m Upgrading pip..."
+# Ensure pip is available and up-to-date in the virtual environment
 if [ "$environment" = "local" ]; then
-    source "$venv_path/bin/activate"
-    pip install --upgrade pip
-    deactivate
-    if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to upgrade pip in development environment."
-        exit 1
-    fi
+    "$venv_path/bin/python3" -m ensurepip --upgrade
+    "$venv_path/bin/python3" -m pip install --upgrade pip
 else
-    sudo -u www-data "$venv_path/bin/pip" install --upgrade pip
-    if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to upgrade pip in production environment."
-        exit 1
-    fi
+    sudo -u www-data env uv_cache_path="${project_path}/.cache/uv" HOME="${project_path}" "$venv_path/bin/python3" -m ensurepip --upgrade
+    sudo -u www-data env uv_cache_path="${project_path}/.cache/uv" HOME="${project_path}" "$venv_path/bin/python3" -m pip install --upgrade pip
+fi
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to ensure pip in virtual environment at $venv_path."
+    exit 1
 fi
 
-# Compile requirements files (using system uv)
-echo -e "\e[38;5;72m[INFO]\e[0m Compiling requirements files..."
-uv pip compile ${project_name}/requirements/base.in --output-file ${project_name}/requirements/base.txt
+# Set ownership for production environment
+if [ "$environment" = "production" ]; then
+    echo -e "\e[38;5;72m[INFO]\e[0m Setting ownership to www-data for production environment..."
+    sudo chown -R www-data:www-data "${venv_path}"
+    sudo chmod -R 755 "/opt/${project_name}App"
+fi
+
+# Compile requirements files
+echo -e "\e[38;5;72m[INFO]\e[0m Compiling requirements files with uv..."
+cd "${project_path}"  # Ensure we are in the project root directory
+if [ ! -f "${project_path}/${project_name}/requirements/base.in" ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Requirements file ${project_path}/${project_name}/requirements/base.in not found."
+    exit 1
+fi
+if [ "$environment" = "local" ]; then
+    "$uv_path" pip compile "${project_path}/${project_name}/requirements/base.in" --output-file "${project_path}/${project_name}/requirements/base.txt"
+else
+    sudo -u www-data env uv_cache_path="${project_path}/.cache/uv" HOME="${project_path}" "$uv_path" pip compile "${project_path}/${project_name}/requirements/base.in" --output-file "${project_path}/${project_name}/requirements/base.txt"
+fi
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile base.txt requirements."
     exit 1
 fi
-uv pip compile ${project_name}/requirements/local.in --output-file ${project_name}/requirements/local.txt
+if [ ! -f "${project_path}/${project_name}/requirements/local.in" ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Requirements file ${project_path}/${project_name}/requirements/local.in not found."
+    exit 1
+fi
+if [ "$environment" = "local" ]; then
+    "$uv_path" pip compile "${project_path}/${project_name}/requirements/local.in" --output-file "${project_path}/${project_name}/requirements/local.txt"
+else
+    sudo -u www-data env uv_cache_path="${project_path}/.cache/uv" HOME="${project_path}" "$uv_path" pip compile "${project_path}/${project_name}/requirements/local.in" --output-file "${project_path}/${project_name}/requirements/local.txt"
+fi
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile local.txt requirements."
     exit 1
 fi
-uv pip compile ${project_name}/requirements/production.in --output-file ${project_name}/requirements/production.txt
+if [ ! -f "${project_path}/${project_name}/requirements/production.in" ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Requirements file ${project_path}/${project_name}/requirements/production.in not found."
+    exit 1
+fi
+if [ "$environment" = "local" ]; then
+    "$uv_path" pip compile "${project_path}/${project_name}/requirements/production.in" --output-file "${project_path}/${project_name}/requirements/production.txt"
+else
+    sudo -u www-data env uv_cache_path="${project_path}/.cache/uv" HOME="${project_path}" "$uv_path" pip compile "${project_path}/${project_name}/requirements/production.in" --output-file "${project_path}/${project_name}/requirements/production.txt"
+fi
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to compile production.txt requirements."
     exit 1
 fi
 
-# Install dependencies based on environment
-echo -e "\e[38;5;72m[INFO]\e[0m Installing ${environment} dependencies..."
+# Install dependencies with uv based on environment
+echo -e "\e[38;5;72m[INFO]\e[0m Installing ${environment} dependencies with uv..."
 if [ "$environment" = "local" ]; then
-    source "$venv_path/bin/activate"
-    uv pip sync "${project_path}/${project_name}/requirements/${environment}.txt"
+    if [ ! -f "${project_path}/${project_name}/requirements/${environment}.txt" ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Requirements file ${project_path}/${project_name}/requirements/${environment}.txt not found."
+        exit 1
+    fi
+    "$uv_path" pip install --python "$venv_path/bin/python3" -r "${project_path}/${project_name}/requirements/${environment}.txt"
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install development dependencies."
         exit 1
     fi
-    deactivate
 else
-    sudo -u www-data uv pip install --python "$venv_path/bin/python" -r "${project_path}/${project_name}/requirements/production.txt"
+    if [ ! -f "${project_path}/${project_name}/requirements/production.txt" ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Requirements file ${project_path}/${project_name}/requirements/production.txt not found."
+        exit 1
+    fi
+    sudo -u www-data env uv_cache_path="${project_path}/.cache/uv" HOME="${project_path}" "$uv_path" pip install --python "$venv_path/bin/python3" -r "${project_path}/${project_name}/requirements/production.txt"
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to install production dependencies."
         exit 1
@@ -969,6 +1146,10 @@ fi
 # Create Django project
 echo -e "\e[38;5;72m[INFO]\e[0m Creating Django project..."
 if [ "$environment" = "local" ]; then
+    if [ ! -f "$venv_path/bin/activate" ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Virtual environment not found at $venv_path/bin/activate."
+        exit 1
+    fi
     source "$venv_path/bin/activate"
     django-admin startproject config "${project_name}"
     if [ $? -ne 0 ]; then
@@ -977,17 +1158,17 @@ if [ "$environment" = "local" ]; then
     fi
     deactivate
 else
-    # Run django-admin directly as www-data to set correct ownership, using the virtualenv's binary
     sudo -u www-data "$venv_path/bin/django-admin" startproject config "${project_path}/${project_name}"
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create Django project in production environment."
         exit 1
     fi
-    # Set ownership for project directory in production
-    echo -e "\e[38;5;72m[INFO]\e[0m Setting ownership for project directory to www-data..."
+    echo -e "\e[38;5;72m[INFO]\e[0m Setting ownership and permissions for project directory..."
     sudo chown -R www-data:www-data "${project_path}/${project_name}"
+    sudo chmod -R 755 "${project_path}/${project_name}"
+    sudo find "${project_path}/${project_name}" -type f -exec chmod 644 {} \;
     if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to set ownership for project directory."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to set ownership or permissions for project directory."
         exit 1
     fi
 fi
@@ -995,51 +1176,47 @@ cd "${project_path}/${project_name}"
 
 # Create applications directory
 echo -e "\e[38;5;72m[INFO]\e[0m Setting up applications directory..."
-touch "${project_path}/${project_name}/apps/__init__.py"
-
-# Create Jinja2 environment configuration
-echo -e "\e[38;5;72m[INFO]\e[0m Creating Jinja2 environment configuration..."
-cat <<EOF > "${project_path}/${project_name}/config/jinja2.py"
-from django.template.context_processors import csrf
-from django.templatetags.static import static
-from django.urls import reverse
-
-from jinja2 import Environment, select_autoescape
-
-
-def environment(**options):
-    """Configure and return a Jinja2 environment."""
-    options.pop('autoescape', None)
-    env = Environment(
-        autoescape=select_autoescape(
-            enabled_extensions=('html', 'j2'),
-            default_for_string=True,
-        ),
-        **options,
-    )
-
-    env.globals.update(
-        {
-            'static': static,
-            'url': reverse,
-            'csrf_token': csrf,
-        }
-    )
-
-    return env
-EOF
+if [ "$environment" = "local" ]; then
+    touch "${project_path}/${project_name}/apps/__init__.py"
+else
+    sudo -u www-data touch "${project_path}/${project_name}/apps/__init__.py"
+fi
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create ${project_path}/${project_name}/apps/__init__.py."
+    exit 1
+fi
 
 # Create settings directory and split settings files
 echo -e "\e[38;5;72m[INFO]\e[0m Creating settings directory and split settings files..."
-mkdir -m 755 -p config/settings
-install -m 644 /dev/null config/settings/__init__.py
-install -m 644 /dev/null config/settings/base.py
-install -m 644 /dev/null config/settings/local.py
-install -m 644 /dev/null config/settings/production.py
-install -m 644 /dev/null config/settings/test.py
+if [ "$environment" = "local" ]; then
+    mkdir -m 755 -p config/settings
+else
+    sudo -u www-data mkdir -m 755 -p config/settings
+fi
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create config/settings directory."
+    exit 1
+fi
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null config/settings/__init__.py
+    install -m 644 /dev/null config/settings/base.py
+    install -m 644 /dev/null config/settings/local.py
+    install -m 644 /dev/null config/settings/production.py
+    install -m 644 /dev/null config/settings/test.py
+else
+    sudo -u www-data install -m 644 /dev/null config/settings/__init__.py
+    sudo -u www-data install -m 644 /dev/null config/settings/base.py
+    sudo -u www-data install -m 644 /dev/null config/settings/local.py
+    sudo -u www-data install -m 644 /dev/null config/settings/production.py
+    sudo -u www-data install -m 644 /dev/null config/settings/test.py
+fi
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create settings files."
+    exit 1
+fi
 
 # Populate settings/base.py
-cat > "${project_path}/${project_name}/config/settings/base.py" << EOF
+base_settings_content=$(cat << EOL
 import sys
 from pathlib import Path
 
@@ -1086,16 +1263,41 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# URL configuration
 ROOT_URLCONF = 'config.urls'
+
+# WSGI application
+WSGI_APPLICATION = 'config.wsgi.application'
 
 # Template engines - Jinja2 and Django templates configuration
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.jinja2.Jinja2',
+        'BACKEND': 'django_jinja.backend.Jinja2',
         'DIRS': [BASE_DIR / '${project_name}/jinja2'],
         'APP_DIRS': True,
         'OPTIONS': {
-            'environment': 'config.jinja2.environment',
+            'match_extension': '.j2',
+            'context_processors': [
+                'django.template.context_processors.debug',
+                'django.template.context_processors.request',
+                'django.contrib.auth.context_processors.auth',
+                'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.csrf',
+            ],
+            'extensions': [
+                'django_jinja.builtins.extensions.DjangoFiltersExtension',
+                'django_jinja.builtins.extensions.CsrfExtension',  # For proper csrf_token work
+                'django_jinja.builtins.extensions.StaticFilesExtension',  # For static
+                'django_jinja.builtins.extensions.UrlsExtension',  # For url
+                'django_jinja.builtins.extensions.TimezoneExtension',  # For timezone support
+                'django_jinja.builtins.extensions.DjangoExtraFiltersExtension',  # Additional Django filters
+                'jinja2.ext.i18n',  # For internationalization
+                'jinja2.ext.loopcontrols',  # For break/continue in loops
+            ],
+            'trim_blocks': True,  # Removes first empty line after a block
+            'lstrip_blocks': True,  # Removes spaces and tabs at the beginning of a line before a block
+            'auto_reload': env.bool('DEBUG', default=True),  # Automatic template reloading during debugging mode
+            'newstyle_gettext': True,  # New style gettext for internationalization
         },
     },
     {
@@ -1113,7 +1315,11 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'config.wsgi.application'
+# Authentication backends for django-allauth
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+    'allauth.account.auth_backends.AuthenticationBackend',
+]
 
 # Password validation - Rules for secure passwords
 AUTH_PASSWORD_VALIDATORS = [
@@ -1123,18 +1329,6 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
-]
-
-# Internationalization - Language and timezone settings
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
-USE_I18N = True
-USE_TZ = True
-
-LOCALE_PATHS = [BASE_DIR / '${project_name}/locale']
-LANGUAGES = [
-    ('en', _('English')),
-    # ('ru', _('Russian')),
 ]
 
 # Static files (CSS, JavaScript, Images) - Paths and finders
@@ -1149,27 +1343,16 @@ STATICFILES_FINDERS = [
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / '${project_name}/media'
 
-# Security settings - Basic protections against common vulnerabilities
-SESSION_COOKIE_HTTPONLY = True
-CSRF_COOKIE_HTTPONLY = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
-X_FRAME_OPTIONS = 'DENY'
+# Internationalization - Language and timezone settings
+LANGUAGE_CODE = 'en-us'
+TIME_ZONE = 'UTC'
+USE_I18N = True
+USE_TZ = True
 
-# Default primary key field type - For database models
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# Admin - Contact information for error notifications
-STAFF_ALEXEY = ('Alexey', 'aleksey.sundyrev@gmail.com')
-ADMINS = STAFF_ALEXEY
-MANAGERS = ADMINS
-
-# Sites framework - Default site ID for django.contrib.sites
-SITE_ID = 1
-
-# Authentication backends for django-allauth
-AUTHENTICATION_BACKENDS = [
-    'django.contrib.auth.backends.ModelBackend',
-    'allauth.account.auth_backends.AuthenticationBackend',
+LOCALE_PATHS = [BASE_DIR / '${project_name}/locale']
+LANGUAGES = [
+    ('en', _('English')),
+    # ('ru', _('Russian')),
 ]
 
 # Caching - Base configuration with multiple cache options
@@ -1206,20 +1389,44 @@ LOGGING = {
         'level': 'INFO',
     },
 }
-EOF
+
+# Security settings - Basic protections against common vulnerabilities
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+
+# Admin - Contact information for error notifications
+STAFF_ALEXEY = ('Alexey', 'aleksey.sundyrev@gmail.com')
+ADMINS = STAFF_ALEXEY
+MANAGERS = ADMINS
+
+# Sites framework - Default site ID for django.contrib.sites
+SITE_ID = 1
+
+# Default primary key field type - For database models
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/${project_name}/config/settings/base.py"
+    echo "$base_settings_content" > "${project_path}/${project_name}/config/settings/base.py"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/${project_name}/config/settings/base.py"
+    echo "$base_settings_content" | sudo tee "${project_path}/${project_name}/config/settings/base.py" > /dev/null
+fi
 
 # Populate settings/local.py
-cat > "${project_path}/${project_name}/config/settings/local.py" << EOF
+local_settings_content=$(cat << EOL
 from .base import *
 
 env = environ.Env()
 
 env.read_env(env_file=BASE_DIR / 'conf/env_vars/local.env')
+
+# Basic settings
 SECRET_KEY = env('SECRET_KEY')
-
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
-
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
 # Database - Configuration for local development
@@ -1229,8 +1436,6 @@ DATABASES = {
 DATABASES['default']['ATOMIC_REQUESTS'] = True
 
 # Development tools - Debugging and extension utilities
-INTERNAL_IPS = ['127.0.0.1']
-
 INSTALLED_APPS += [
     'debug_toolbar',
     'django_extensions',
@@ -1239,6 +1444,8 @@ INSTALLED_APPS += [
 MIDDLEWARE += [
     'debug_toolbar.middleware.DebugToolbarMiddleware',
 ]
+
+INTERNAL_IPS = ['127.0.0.1']
 
 DEBUG_TOOLBAR_CONFIG = {
     'SHOW_TEMPLATE_CONTEXT': True,
@@ -1315,20 +1522,27 @@ LOGGING = {
         },
     },
 }
-EOF
+EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/${project_name}/config/settings/local.py"
+    echo "$local_settings_content" > "${project_path}/${project_name}/config/settings/local.py"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/${project_name}/config/settings/local.py"
+    echo "$local_settings_content" | sudo tee "${project_path}/${project_name}/config/settings/local.py" > /dev/null
+fi
 
 # Populate settings/production.py
-cat > "${project_path}/${project_name}/config/settings/production.py" << EOF
+production_settings_content=$(cat << EOL
 from .base import *
 
 env = environ.Env()
 
 env.read_env(env_file=BASE_DIR / 'conf/env_vars/production.env')
+
+# Basic settings
 SECRET_KEY = env('SECRET_KEY')
-
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
-
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['${project_domain}'])
 
 # Database - Configuration for production with persistent connections
@@ -1337,20 +1551,6 @@ DATABASES = {
 }
 DATABASES['default']['ATOMIC_REQUESTS'] = True
 DATABASES['default']['CONN_MAX_AGE'] = env.int('CONN_MAX_AGE', default=60)
-
-# Security settings - Enhanced protections for production
-SECURE_SSL_REDIRECT = True
-SESSION_COOKIE_SECURE = True
-SESSION_COOKIE_NAME = '__Secure-sessionid'
-CSRF_COOKIE_SECURE = True
-CSRF_COOKIE_NAME = '__Secure-csrftoken'
-SECURE_BROWSER_XSS_FILTER = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
-X_FRAME_OPTIONS = 'DENY'
-SECURE_HSTS_SECONDS = 31536000
-SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-SECURE_HSTS_PRELOAD = env.bool('DJANGO_SECURE_HSTS_PRELOAD', default=True)
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Email settings - SMTP configuration for production
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -1409,31 +1609,74 @@ LOGGING = {
     },
 }
 
+# Security settings - Enhanced protections for production
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_NAME = '__Secure-sessionid'
+CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_NAME = '__Secure-csrftoken'
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = env.bool('DJANGO_SECURE_HSTS_PRELOAD', default=True)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 # Static files - Storage configuration for production
 STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
-EOF
+EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/${project_name}/config/settings/production.py"
+    echo "$production_settings_content" > "${project_path}/${project_name}/config/settings/production.py"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/${project_name}/config/settings/production.py"
+    echo "$production_settings_content" | sudo tee "${project_path}/${project_name}/config/settings/production.py" > /dev/null
+fi
 
 # Populate settings/test.py
-cat > "${project_path}/${project_name}/config/settings/test.py" << EOF
+test_settings_content=$(cat << EOL
 import environ
 
 from .base import CACHES
 
 env = environ.Env()
 
+# Basic settings
 SECRET_KEY = env('SECRET_KEY')
+
+# Test runner
 TEST_RUNNER = 'django.test.runner.DiscoverRunner'
+
+# Password hashers - Optimized for testing
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
+# Email settings - In-memory backend for testing
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+
+# Caching - Use LocMemCache for testing
 CACHES = {
     'default': CACHES['localmem'],  # Use LocMemCache from base.py for testing
 }
-EOF
+EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${project_path}/${project_name}/config/settings/test.py"
+    echo "$test_settings_content" > "${project_path}/${project_name}/config/settings/test.py"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${project_path}/${project_name}/config/settings/test.py"
+    echo "$test_settings_content" | sudo tee "${project_path}/${project_name}/config/settings/test.py" > /dev/null
+fi
 
-# Remove the original settings.py as it’s no longer needed
+# Remove the original settings.py
 echo -e "\e[38;5;72m[INFO]\e[0m Removing original settings.py..."
 if [ -f "${project_path}/${project_name}/config/settings.py" ]; then
-    rm -f "${project_path}/${project_name}/config/settings.py"
+    if [ "$environment" = "local" ]; then
+        rm -f "${project_path}/${project_name}/config/settings.py"
+    else
+        sudo rm -f "${project_path}/${project_name}/config/settings.py"
+    fi
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to remove original settings.py."
         exit 1
@@ -1444,12 +1687,8 @@ fi
 
 # Generate a secure SECRET_KEY and update .env files
 echo -e "\e[38;5;72m[INFO]\e[0m Generating a secure SECRET_KEY and updating .env files..."
-SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(50))")
-
-# Escape special characters in SECRET_KEY for sed
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(50))")
 SECRET_KEY_ESCAPED=$(echo "$SECRET_KEY" | sed 's/[&/\]/\\&/g')
-
-# Update .env .env files with the new SECRET_KEY in quotes
 sudo sed -i "s/^SECRET_KEY=.*/SECRET_KEY='${SECRET_KEY_ESCAPED}'/" "${project_path}/conf/env_vars/local.env"
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to update SECRET_KEY in local.env."
@@ -1462,10 +1701,9 @@ if [ $? -ne 0 ]; then
 fi
 
 # Update settings/urls.py
-urls_path=config/urls.py
-# Clearing the existing file
-> "${urls_path}"
-cat >> "${urls_path}" << 'EOF'
+echo -e "\e[38;5;72m[INFO]\e[0m Updating urls.py..."
+urls_path="${project_path}/${project_name}/config/urls.py"
+urls_content=$(cat << EOL
 from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
@@ -1476,7 +1714,19 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns.append(path('__debug__/', include('debug_toolbar.urls')))
-EOF
+EOL
+)
+if [ "$environment" = "local" ]; then
+    install -m 644 /dev/null "${urls_path}"
+    echo "$urls_content" > "${urls_path}"
+else
+    sudo install -m 644 -o www-data -g www-data /dev/null "${urls_path}"
+    echo "$urls_content" | sudo tee "${urls_path}" > /dev/null
+fi
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to update urls.py."
+    exit 1
+fi
 
 # Load environment variables before collecting static files
 echo -e "\e[38;5;72m[INFO]\e[0m Loading environment variables from ${environment}.env..."
@@ -1489,14 +1739,38 @@ fi
 # Collect static files
 if [ "$environment" = "local" ]; then
     echo -e "\e[38;5;72m[INFO]\e[0m Collecting static files..."
+    if [ ! -f "$venv_path/bin/activate" ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Virtual environment not found at $venv_path/bin/activate."
+        exit 1
+    fi
     source "$venv_path/bin/activate"
-    python "${project_path}/${project_name}/manage.py" collectstatic --noinput
+    export DJANGO_SETTINGS_MODULE=config.settings.local
+    python3 "${project_path}/${project_name}/manage.py" collectstatic --noinput
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files."
         deactivate
         exit 1
     fi
     deactivate
+    echo -e "\e[38;5;72m[INFO]\e[0m Setting correct ownership for static files..."
+    sudo chown -R "${USER}:www-data" "${project_path}/${project_name}/staticfiles"
+    chmod -R 775 "${project_path}/${project_name}/staticfiles"
+    find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 664 {} \;
+else
+    echo -e "\e[38;5;72m[INFO]\e[0m Collecting static files for production..."
+    if [ ! -f "$venv_path/bin/activate" ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Virtual environment not found at $venv_path/bin/activate."
+        exit 1
+    fi
+    sudo -u www-data env DJANGO_SETTINGS_MODULE=config.settings.production "$venv_path/bin/python3" "${project_path}/${project_name}/manage.py" collectstatic --noinput
+    if [ $? -ne 0 ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to collect static files in production."
+        exit 1
+    fi
+    echo -e "\e[38;5;72m[INFO]\e[0m Setting correct ownership for static files..."
+    sudo chown -R www-data:www-data "${project_path}/${project_name}/staticfiles"
+    sudo chmod -R 755 "${project_path}/${project_name}/staticfiles"
+    sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
 fi
 
 # Configure Gunicorn
@@ -1557,7 +1831,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Start and enable Gunicorn service with status check
 sudo systemctl start "${project_name}.gunicorn.service"
 if ! sudo systemctl is-active "${project_name}.gunicorn.service" > /dev/null; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to start Gunicorn service."
@@ -1569,7 +1842,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Start and enable Gunicorn socket with status check
 sudo systemctl start "${project_name}.gunicorn.socket"
 if ! sudo systemctl is-active "${project_name}.gunicorn.socket" > /dev/null; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to start Gunicorn socket."
@@ -1583,7 +1855,6 @@ fi
 
 # Configure Nginx configuration for Docker
 echo -e "\e[38;5;72m[INFO]\e[0m Setting up Nginx configuration..."
-# Create nginx.conf for Docker environment
 docker_nginx_conf="${project_path}/conf/nginx/docker/nginx.conf"
 cat <<EOF | sudo tee "${docker_nginx_conf}" > /dev/null
 worker_processes auto;
@@ -1624,7 +1895,6 @@ http {
 EOF
 sudo chmod 644 "${docker_nginx_conf}"
 
-# Create <project_name>.conf for Docker environment
 docker_project_conf="${project_path}/conf/nginx/docker/${project_name}.conf"
 cat <<EOF | sudo tee "${docker_project_conf}" > /dev/null
 server {
@@ -1694,7 +1964,6 @@ server {
 EOF
 sudo chmod 644 "${docker_project_conf}"
 
-# Create nginx.conf for local environment
 local_nginx_conf="${project_path}/conf/nginx/local/nginx.conf"
 cat <<EOF | sudo tee "${local_nginx_conf}" > /dev/null
 user www-data;
@@ -1741,7 +2010,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Create <project_name>.conf for local environment
 local_project_conf="${project_path}/conf/nginx/local/${project_name}.conf"
 cat <<EOF | sudo tee "${local_project_conf}" > /dev/null
 server {
@@ -1813,14 +2081,12 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Reload systemd to apply changes
 sudo systemctl daemon-reload
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload systemd daemon for Nginx."
     exit 1
 fi
 
-# Create a symbolic link for Nginx configuration
 if [[ ! -f "/etc/nginx/sites-enabled/${project_name}.conf" ]]; then
     sudo ln -sf "${local_project_conf}" "/etc/nginx/sites-enabled/${project_name}.conf"
     if [ $? -ne 0 ]; then
@@ -1829,7 +2095,6 @@ if [[ ! -f "/etc/nginx/sites-enabled/${project_name}.conf" ]]; then
     fi
 fi
 
-# Validate Nginx configuration before restarting
 if sudo nginx -t; then
     echo -e "\e[38;5;72m[INFO]\e[0m Restarting Nginx..."
     sudo systemctl restart nginx
@@ -1858,6 +2123,10 @@ if [ "$environment" = "local" ]; then
         exit 1
     fi
     echo -e "\e[38;5;72m[INFO]\e[0m Installing pre-commit hooks..."
+    if [ ! -f "$venv_path/bin/activate" ]; then
+        echo -e "\e[38;5;196m[ERROR]\e[0m Virtual environment not found at $venv_path/bin/activate."
+        exit 1
+    fi
     source "$venv_path/bin/activate"
     pre-commit install
     if [ $? -ne 0 ]; then

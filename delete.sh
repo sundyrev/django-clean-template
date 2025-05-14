@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# ============================================
+# Script to delete a Django project
+# ============================================
+# This script deletes a Django project, including its folder, virtual environment,
+# PostgreSQL database and user, Gunicorn service/socket, and Nginx configuration.
+# It supports a local mode (--local) to skip server-related operations. All actions
+# are logged to a timestamped file, and user confirmation is required for critical steps.
+
+# Usage: delete.sh [--local] [--project PROJECT_NAME]
+#   --local: Skip Gunicorn and Nginx operations for local development
+#   --project PROJECT_NAME: Name of the Django project folder (prompted if not specified)
+
 # Initialize variables
 project_name=""
 project_path=""
@@ -14,14 +26,14 @@ if [[ "$1" == "--local" ]]; then
 fi
 
 # Prompt for project name
-read -e -p $'\e[38;5;117m[1/2]\e[0m Project name: ' project_name
+read -e -p $'\e[38;5;117m[1/3]\e[0m Project name: ' project_name
 if [[ -z "${project_name}" ]]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Project name is required."
     exit 1
 fi
 
 # Confirm project name to prevent typos
-read -e -p $'\e[38;5;117m[2/2]\e[0m Confirm project name: ' confirm_project_name
+read -e -p $'\e[38;5;117m[2/3]\e[0m Confirm project name: ' confirm_project_name
 if [[ "${project_name}" != "${confirm_project_name}" ]]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Project names do not match."
     exit 1
@@ -189,11 +201,13 @@ if [[ "${local_mode}" == false && -d "/opt/${project_name}" ]]; then
 fi
 
 # Delete the project folder
-if [[ -d "${project_path}" ]]; then
+# Use sudo to check directory existence to handle cases where the user lacks permissions
+if sudo test -d "${project_path}"; then
     echo -e "\e[38;5;72m[INFO]\e[0m Deleting the project folder \e[38;5;223m${project_path}\e[0m..."
+    # Attempt to delete the directory with sudo to ensure permissions
     sudo rm -rf "${project_path}"
     if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to delete project folder \e[38;5;223m\"${project_path}\"\e[0m."
+        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to delete project folder \e[38;5;223m\"${project_path}\"\e[0m. Check permissions or file system restrictions."
         exit 1
     fi
 else

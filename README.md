@@ -6,7 +6,7 @@ A clean and production-ready Django project template that supports both local de
 
 - [Features](#features)
 - [Limitations](#limitations)
-- [Project Structure](#project-structure)
+- [Project Structure](#project_structure)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Detailed Installation](#detailed-installation)
@@ -122,8 +122,7 @@ project_directory/
 
 ## Prerequisites
 
-- **Python 3.12+**: Managed via `pyenv`.
-- **pyenv**: Required for Python version management.
+- **Python 3.12+**: Ensure it is installed and accessible as `python3`.
 - **Git**: For cloning the repository.
 - **sudo privileges**: Needed for installing system packages and configuring services.
 - **PostgreSQL 13+**: Required database (installed by `install.sh` for local setup).
@@ -142,9 +141,21 @@ project_directory/
 
 2. Run the installation script:
 
-   ```zsh
-   sudo ./install.sh
-   ```
+   - For local development:
+
+     ```zsh
+     mkdir <project_name>
+     cd <project_name>
+     uv python pin 3.12
+     ./install.sh
+     ```
+
+   - For production environment:
+     ```zsh
+     mkdir <project_name>
+     cd <project_name>
+     ./install.sh
+     ```
 
    Follow the prompts to enter the domain name, project name, and environment (development or production).
 
