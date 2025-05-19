@@ -4,10 +4,11 @@ set -e
 # ============================================
 # Script to run Django development server
 # ============================================
-# This script stops the Gunicorn service and socket (if running), activates
-# the project's virtual environment, and starts the Django development server
-# for the specified project. It ensures the project directory and virtual
-# environment exist before proceeding.
+# This script stops the Gunicorn sockets and services for both "local" and "production"
+# instances (if running), syncs dependencies for the local environment, activates the
+# project's virtual environment, and starts the Django development server for the
+# specified project. It ensures the project directory, virtual environment, and
+# requirements file exist before proceeding.
 
 # Usage: runserver.sh [--project PROJECT_NAME]
 #   --project PROJECT_NAME: Name of the Django project folder
@@ -55,7 +56,6 @@ if [[ -n "$project_path" ]]; then
     project_path="${project_path/#\~/$HOME}"
 fi
 
-
 if [[ -z "$project_path" ]]; then
     read -e -p "Project path: " project_path
     project_path="${project_path/#\~/$HOME}"
@@ -77,34 +77,43 @@ if [[ ! -d "${project_path}/env" ]]; then
     exit 1
 fi
 
-echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn..."
-if systemctl list-unit-files | grep -q "${project_name}.gunicorn.socket"; then
-    if systemctl --quiet is-active "${project_name}.gunicorn.socket"; then
-        sudo systemctl stop "${project_name}.gunicorn.socket"
-        if [ $? -ne 0 ]; then
-            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn socket."
-            exit 1
-        fi
-        echo -e "\e[38;5;72m[INFO]\e[0m Gunicorn socket stopped."
-    else
-        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn socket is not active, skipping stop."
-    fi
+# Check for local requirements file
+requirements_file="${project_path}/${project_name}/requirements/local.txt"
+if [[ ! -f "${requirements_file}" ]]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Local requirements file not found at \e[38;5;223m${requirements_file}\e[0m."
+    exit 1
 fi
 
-if systemctl list-unit-files | grep -q "${project_name}.gunicorn.service"; then
-    if systemctl --quiet is-active "${project_name}.gunicorn.service"; then
-        sudo systemctl stop "${project_name}.gunicorn.service"
+# Define environments for Gunicorn instances
+envs=("local" "production")
+
+# Stop Gunicorn sockets and services for both environments
+for env in "${envs[@]}"; do
+    socket_unit="${project_name}.gunicorn@${env}.socket"
+    service_unit="${project_name}.gunicorn@${env}.service"
+
+    if systemctl --quiet is-active "${socket_unit}"; then
+        echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn socket for ${env}..."
+        sudo systemctl stop "${socket_unit}"
         if [ $? -ne 0 ]; then
-            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn service."
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn socket for ${env}."
             exit 1
         fi
-        echo -e "\e[38;5;72m[INFO]\e[0m Gunicorn service stopped."
     else
-        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service is not active, skipping stop."
+        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn socket for ${env} is not active, skipping stop."
     fi
-else
-    echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service '${project_name}.gunicorn.service' not found, skipping stop."
-fi
+
+    if systemctl --quiet is-active "${service_unit}"; then
+        echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn service for ${env}..."
+        sudo systemctl stop "${service_unit}"
+        if [ $? -ne 0 ]; then
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn service for ${env}."
+            exit 1
+        fi
+    else
+        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service for ${env} is not active, skipping stop."
+    fi
+done
 
 echo -e "\e[38;5;72m[INFO]\e[0m Activating virtual environment..."
 if [[ -f "${project_path}/env/bin/activate" ]]; then
@@ -118,6 +127,14 @@ else
     echo -e "\e[38;5;196m[ERROR]\e[0m Activation script not found at \e[38;5;223m${project_path}/env/bin/activate\e[0m."
     exit 1
 fi
+
+echo -e "\e[38;5;72m[INFO]\e[0m Syncing local dependencies..."
+uv pip sync "${requirements_file}"
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to sync local dependencies from \e[38;5;223m${requirements_file}\e[0m."
+    exit 1
+fi
+echo -e "\e[38;5;72m[INFO]\e[0m Local dependencies synced successfully."
 
 export DJANGO_SETTINGS_MODULE=config.settings.local
 
