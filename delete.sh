@@ -5,12 +5,13 @@ set -e
 # Script to delete a Django project
 # ============================================
 # This script deletes a Django project, including its folder, virtual environment,
-# PostgreSQL database and user, Gunicorn service/socket, and Nginx configuration.
-# It supports a local mode (--local) to skip server-related operations. All actions
-# are logged to a timestamped file, and user confirmation is required for critical steps.
+# PostgreSQL database and user, Gunicorn service/socket for both local and production,
+# and Nginx configuration. It supports a local mode (--local) to skip server-related
+# operations like Nginx. All actions are logged to a timestamped file, and user
+# confirmation is required for critical steps.
 
 # Usage: delete.sh [--local] [--project PROJECT_NAME]
-#   --local: Skip Gunicorn and Nginx operations for local development
+#   --local: Skip Nginx operations for local development
 #   --project PROJECT_NAME: Name of the Django project folder (prompted if not specified)
 
 # Initialize variables
@@ -74,57 +75,81 @@ if [[ "${project_path}" == "${script_dir}" ]]; then
     exit 1
 fi
 
-# Skip Gunicorn and Nginx operations in local mode
-if [[ "${local_mode}" == false ]]; then
-    # Stop both Gunicorn service and socket simultaneously
-    echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn service and socket..."
-    if systemctl --quiet is-active "${project_name}.gunicorn.service" || systemctl --quiet is-active "${project_name}.gunicorn.socket"; then
-        sudo systemctl stop "${project_name}.gunicorn.service" "${project_name}.gunicorn.socket"
+# Define environments for Gunicorn instances
+envs=("local" "production")
+
+# Stop and disable Gunicorn instances for both environments
+for env in "${envs[@]}"; do
+    socket_unit="${project_name}.gunicorn@${env}.socket"
+    service_unit="${project_name}.gunicorn@${env}.service"
+
+    # Stop the socket if active
+    if systemctl --quiet is-active "${socket_unit}"; then
+        echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn socket for ${env}..."
+        sudo systemctl stop "${socket_unit}"
         if [ $? -ne 0 ]; then
-            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn service or socket."
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn socket for ${env}."
             exit 1
         fi
     else
-        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service and socket are not active, skipping stop."
+        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn socket for ${env} is not active, skipping stop."
     fi
 
-    # Disable Gunicorn service and socket
-    echo -e "\e[38;5;72m[INFO]\e[0m Disabling the Gunicorn service and socket..."
-    if systemctl list-unit-files | grep -q "${project_name}.gunicorn.service"; then
-        sudo systemctl disable "${project_name}.gunicorn.service" > /dev/null 2>&1
+    # Stop the service if active
+    if systemctl --quiet is-active "${service_unit}"; then
+        echo -e "\e[38;5;72m[INFO]\e[0m Stopping Gunicorn service for ${env}..."
+        sudo systemctl stop "${service_unit}"
         if [ $? -ne 0 ]; then
-            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to disable Gunicorn service."
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to stop Gunicorn service for ${env}."
+            exit 1
+        fi
+    else
+        echo -e "\e[38;5;208m[WARNING]\e[0m Gunicorn service for ${env} is not active, skipping stop."
+    fi
+
+    # Disable the socket if enabled
+    if systemctl list-unit-files | grep -q "${socket_unit}"; then
+        echo -e "\e[38;5;72m[INFO]\e[0m Disabling Gunicorn socket for ${env}..."
+        sudo systemctl disable "${socket_unit}"
+        if [ $? -ne 0 ]; then
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to disable Gunicorn socket for ${env}."
             exit 1
         fi
     fi
-    if systemctl list-unit-files | grep -q "${project_name}.gunicorn.socket"; then
-        sudo systemctl disable "${project_name}.gunicorn.socket" > /dev/null 2>&1
+
+    # Disable the service if enabled (optional, for thoroughness)
+    if systemctl list-unit-files | grep -q "${service_unit}"; then
+        echo -e "\e[38;5;72m[INFO]\e[0m Disabling Gunicorn service for ${env}..."
+        sudo systemctl disable "${service_unit}"
         if [ $? -ne 0 ]; then
-            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to disable Gunicorn socket."
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to disable Gunicorn service for ${env}."
             exit 1
         fi
     fi
+done
 
-    # Remove Gunicorn service and socket files
-    echo -e "\e[38;5;72m[INFO]\e[0m Removing Gunicorn service and socket files..."
-    for file in "/etc/systemd/system/${project_name}.gunicorn.service" "/etc/systemd/system/${project_name}.gunicorn.socket"; do
-        if [[ -f "$file" ]]; then
-            sudo rm -f "$file"
-            if [ $? -ne 0 ]; then
-                echo -e "\e[38;5;196m[ERROR]\e[0m Failed to remove $file."
-                exit 1
-            fi
+# Remove Gunicorn template files
+echo -e "\e[38;5;72m[INFO]\e[0m Removing Gunicorn template files..."
+for file in "/etc/systemd/system/${project_name}.gunicorn@.service" "/etc/systemd/system/${project_name}.gunicorn@.socket"; do
+    if [[ -f "$file" ]]; then
+        sudo rm -f "$file"
+        if [ $? -ne 0 ]; then
+            echo -e "\e[38;5;196m[ERROR]\e[0m Failed to remove $file."
+            exit 1
         fi
-    done
-
-    # Reload systemd to apply changes
-    echo -e "\e[38;5;72m[INFO]\e[0m Reloading systemd to refresh the configuration..."
-    sudo systemctl daemon-reload
-    if [ $? -ne 0 ]; then
-        echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload systemd daemon."
-        exit 1
     fi
+done
 
+# Reload systemd to apply changes
+echo -e "\e[38;5;72m[INFO]\e[0m Reloading systemd to refresh the configuration..."
+sudo systemctl daemon-reload
+if [ $? -ne 0 ]; then
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload systemd daemon."
+    exit 1
+fi
+
+# Handle Nginx operations only if not in local mode
+if [[ "${local_mode}" == false ]]; then
     # Remove Nginx configuration
     echo -e "\e[38;5;72m[INFO]\e[0m Removing Nginx configuration..."
     nginx_available_config="/etc/nginx/sites-available/${project_name}.conf"
@@ -190,8 +215,8 @@ else
     echo -e "\e[38;5;72m[INFO]\e[0m Skipping PostgreSQL database and user deletion."
 fi
 
-# Delete virtual environment in production
-if [[ "${local_mode}" == false && -d "/opt/${project_name}" ]]; then
+# Delete virtual environment in /opt/${project_name} if it exists
+if [[ -d "/opt/${project_name}" ]]; then
     echo -e "\e[38;5;72m[INFO]\e[0m Deleting virtual environment \e[38;5;223m/opt/${project_name}\e[0m..."
     sudo rm -rf "/opt/${project_name}"
     if [ $? -ne 0 ]; then
@@ -201,10 +226,8 @@ if [[ "${local_mode}" == false && -d "/opt/${project_name}" ]]; then
 fi
 
 # Delete the project folder
-# Use sudo to check directory existence to handle cases where the user lacks permissions
 if sudo test -d "${project_path}"; then
     echo -e "\e[38;5;72m[INFO]\e[0m Deleting the project folder \e[38;5;223m${project_path}\e[0m..."
-    # Attempt to delete the directory with sudo to ensure permissions
     sudo rm -rf "${project_path}"
     if [ $? -ne 0 ]; then
         echo -e "\e[38;5;196m[ERROR]\e[0m Failed to delete project folder \e[38;5;223m\"${project_path}\"\e[0m. Check permissions or file system restrictions."

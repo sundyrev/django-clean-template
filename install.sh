@@ -107,25 +107,17 @@ fi
 
 # Create the directory structure
 echo -e "\e[38;5;72m[INFO]\e[0m Creating project directory structure..."
-if [ "$environment" = "local" ]; then
-    mkdir -m 755 -p \
-        "${project_path}/docker" \
-        "${project_path}/log/nginx" \
-        "${project_path}/conf/nginx/"{local,docker} \
-        "${project_path}/conf/"{gunicorn,env_vars,redis} \
-        "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
-        "${project_path}/${project_name}/static/"{css,js,images,admin} \
-        "${project_path}/${project_name}/media/uploads"
-else
-    sudo mkdir -m 755 -p \
-        "${project_path}/docker" \
-        "${project_path}/log/nginx" \
-        "${project_path}/conf/nginx/"{local,docker} \
-        "${project_path}/conf/"{gunicorn,env_vars,redis} \
-        "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
-        "${project_path}/${project_name}/static/"{css,js,images,admin} \
-        "${project_path}/${project_name}/media/uploads"
-fi
+cmd="sudo"
+[ "$environment" = "local" ] && cmd=""
+$cmd mkdir -m 755 -p \
+    "${project_path}/ssl" \
+    "${project_path}/docker" \
+    "${project_path}/log/nginx" \
+    "${project_path}/conf/nginx/"{local,docker} \
+    "${project_path}/conf/"{gunicorn,env_vars,redis} \
+    "${project_path}/${project_name}/"{apps,templates,jinja2,requirements,staticfiles} \
+    "${project_path}/${project_name}/static/"{css,js,images,admin} \
+    "${project_path}/${project_name}/media/uploads"
 
 # Set ownership for web server directories
 if [ "$environment" = "local" ]; then
@@ -134,28 +126,39 @@ else
     sudo chown -R www-data:www-data "${project_path}"
 fi
 
-# Set base permissions
+# Determine command prefix based on environment
+cmd="sudo"
+[ "$environment" = "local" ] && cmd=""
+
+# Set base permissions for directories
+$cmd chmod -R 755 \
+    "${project_path}/conf" \
+    "${project_path}/ssl"
+$cmd chmod -R 775 \
+    "${project_path}/log" \
+    "${project_path}/${project_name}/media"
+
+# Handle environment-specific directory permissions
 if [ "$environment" = "local" ]; then
-    chmod -R 755 "${project_path}/conf"
-    chmod -R 775 "${project_path}/log"
-    chmod -R 775 "${project_path}/docker"
-    chmod -R 775 "${project_path}/${project_name}/"{requirements,media,staticfiles}
+    $cmd chmod -R 775 \
+        "${project_path}/docker" \
+        "${project_path}/${project_name}/"{requirements,staticfiles}
 else
-    sudo chmod -R 755 "${project_path}/conf"
-    sudo chmod -R 775 "${project_path}/log"
-    sudo chmod -R 755 "${project_path}/docker"
-    sudo chmod -R 775 "${project_path}/${project_name}/media"
-    sudo chmod -R 755 "${project_path}/${project_name}/"{requirements,staticfiles}
+    $cmd chmod -R 755 \
+        "${project_path}/docker" \
+        "${project_path}/${project_name}/"{requirements,staticfiles}
 fi
 
 # Set specific permissions for files
+$cmd find "${project_path}/conf" -type f -exec chmod 644 {} \;
+$cmd find "${project_path}/ssl" -type f -exec chmod 600 {} \;
+
+# Handle environment-specific file permissions
 if [ "$environment" = "local" ]; then
-    find "${project_path}/conf" -type f -exec chmod 644 {} \;
-    find "${project_path}/"{log,docker,${project_name}/requirements,${project_name}/media,${project_name}/staticfiles} -type f -exec chmod 664 {} \;
+    $cmd find "${project_path}/"{log,docker,${project_name}/requirements,${project_name}/media,${project_name}/staticfiles} -type f -exec chmod 664 {} \;
 else
-    sudo find "${project_path}/conf" -type f -exec chmod 644 {} \;
-    sudo find "${project_path}/"{log,${project_name}/media} -type f -exec chmod 664 {} \;
-    sudo find "${project_path}/"{docker,${project_name}/requirements,${project_name}/staticfiles} -type f -exec chmod 644 {} \;
+    $cmd find "${project_path}/"{log,${project_name}/media} -type f -exec chmod 664 {} \;
+    $cmd find "${project_path}/"{docker,${project_name}/requirements,${project_name}/staticfiles} -type f -exec chmod 644 {} \;
 fi
 
 # Create requirements files
@@ -245,8 +248,10 @@ fi
 # Create log files with proper permissions
 sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/access.log"
 sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/nginx/error.log"
-sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/gunicorn.log"
 sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/django.log"
+# Create Gunicorn log files based on environment
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/gunicorn-${environment}-access.log"
+sudo install -m 664 -o www-data -g www-data /dev/null "${project_path}/log/gunicorn-${environment}-error.log"
 
 # Create pyproject.toml for Ruff configuration
 echo -e "\e[38;5;72m[INFO]\e[0m Creating pyproject.toml for Ruff configuration..."
@@ -410,8 +415,22 @@ pytest_ini_content=$(cat << EOL
 [pytest]
 DJANGO_SETTINGS_MODULE = config.settings.local
 python_files = tests.py test_*.py
-addopts = --strict-markers --tb=short --capture=no
+pythonpath = .
+testpaths = ${project_name}/tests ${project_name}/apps
+addopts =
+    --strict-markers
+    --tb=short
+    --capture=no
+    --cov=${project_name}/utils
+    --cov=${project_name}/apps
+    --cov-report=html
+    --cov-report=term-missing
+    --reuse-db
 log_level = WARNING
+markers =
+    unit: Unit tests for individual components
+    integration: Integration tests involving multiple components
+    production: Tests that require production settings
 EOL
 )
 if [ "$environment" = "local" ]; then
@@ -650,6 +669,16 @@ COPY conf/nginx/docker/nginx.conf /etc/nginx/nginx.conf
 # Copy the additional configuration file for virtual hosts
 COPY conf/nginx/docker/${project_name}.conf /etc/nginx/conf.d/default.conf
 
+# Copy SSL certificates
+COPY ssl/cert.crt /etc/nginx/ssl/cert.crt
+COPY ssl/cert.key /etc/nginx/ssl/cert.key
+
+# Create SSL directory and set ownership and permissions
+RUN mkdir -p /etc/nginx/ssl && \\
+    chown -R nginx:nginx /etc/nginx/ssl && \\
+    chmod 644 /etc/nginx/ssl/cert.crt && \\
+    chmod 600 /etc/nginx/ssl/cert.key
+
 # Set ownership for the nginx configuration directory
 RUN chown -R nginx:nginx /etc/nginx/conf.d/
 
@@ -879,6 +908,7 @@ requirements/*.txt
 conf/
 env/
 log/
+ssl/
 
 # Jinja2
 jinja2/*.pyc
@@ -1773,17 +1803,22 @@ else
     sudo find "${project_path}/${project_name}/staticfiles" -type f -exec chmod 644 {} \;
 fi
 
-# Configure Gunicorn
-echo -e "\e[38;5;72m[INFO]\e[0m Setting up Gunicorn configuration..."
-gunicorn_socket="${project_path}/conf/gunicorn/${project_name}.gunicorn.socket"
-gunicorn_service="${project_path}/conf/gunicorn/${project_name}.gunicorn.service"
+# Configure Gunicorn template units
+echo -e "\e[38;5;72m[INFO]\e[0m Setting up Gunicorn template units..."
+gunicorn_socket="${project_path}/conf/gunicorn/${project_name}.gunicorn@.socket"
+gunicorn_service="${project_path}/conf/gunicorn/${project_name}.gunicorn@.service"
 
 cat <<EOF | sudo tee "${gunicorn_socket}" > /dev/null
 [Unit]
-Description=gunicorn socket
+Description=Gunicorn socket for ${project_name} (%i)
+After=network.target
 
 [Socket]
 ListenStream=/run/${project_name}.gunicorn.sock
+SocketUser=www-data
+SocketGroup=www-data
+SocketMode=0660
+Service=${project_name}.gunicorn@%i.service
 
 [Install]
 WantedBy=sockets.target
@@ -1792,64 +1827,47 @@ sudo chmod 644 "${gunicorn_socket}"
 
 cat <<EOF | sudo tee "${gunicorn_service}" > /dev/null
 [Unit]
-Description=gunicorn daemon
-Requires=${project_name}.gunicorn.socket
+Description=Gunicorn daemon for ${project_name} (%i)
 After=network.target
+Requires=${project_name}.gunicorn@%i.socket
 
 [Service]
 UMask=002
 User=www-data
 Group=www-data
 WorkingDirectory=${project_path}/${project_name}
-EnvironmentFile=${project_path}/conf/env_vars/${environment}.env
+EnvironmentFile=${project_path}/conf/env_vars/%i.env
 ExecStart=${venv_path}/bin/gunicorn \\
-    --access-logfile ${project_path}/log/gunicorn.log \\
-    --error-logfile ${project_path}/log/gunicorn.log \\
+    --access-logfile ${project_path}/log/gunicorn-%i-access.log \\
+    --error-logfile ${project_path}/log/gunicorn-%i-error.log \\
     --capture-output \\
     --workers 3 \\
     --bind unix:/run/${project_name}.gunicorn.sock \\
     config.wsgi:application
+Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
 sudo chmod 644 "${gunicorn_service}"
 
-sudo ln -s "${gunicorn_service}" "/etc/systemd/system/${project_name}.gunicorn.service"
+# Create symlinks for template units
+sudo ln -s "${gunicorn_service}" "/etc/systemd/system/${project_name}.gunicorn@.service"
 if [ $? -ne 0 ]; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create symlink for Gunicorn service."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create symlink for Gunicorn template service."
     exit 1
 fi
-sudo ln -s "${gunicorn_socket}" "/etc/systemd/system/${project_name}.gunicorn.socket"
+sudo ln -s "${gunicorn_socket}" "/etc/systemd/system/${project_name}.gunicorn@.socket"
 if [ $? -ne 0 ]; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create symlink for Gunicorn socket."
+    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to create symlink for Gunicorn template socket."
     exit 1
 fi
+
+# Reload systemd to recognize new units
 sudo systemctl daemon-reload
 if [ $? -ne 0 ]; then
     echo -e "\e[38;5;196m[ERROR]\e[0m Failed to reload systemd daemon."
-    exit 1
-fi
-
-sudo systemctl start "${project_name}.gunicorn.service"
-if ! sudo systemctl is-active "${project_name}.gunicorn.service" > /dev/null; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to start Gunicorn service."
-    exit 1
-fi
-sudo systemctl enable "${project_name}.gunicorn.service"
-if [ $? -ne 0 ]; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to enable Gunicorn service."
-    exit 1
-fi
-
-sudo systemctl start "${project_name}.gunicorn.socket"
-if ! sudo systemctl is-active "${project_name}.gunicorn.socket" > /dev/null; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to start Gunicorn socket."
-    exit 1
-fi
-sudo systemctl enable "${project_name}.gunicorn.socket"
-if [ $? -ne 0 ]; then
-    echo -e "\e[38;5;196m[ERROR]\e[0m Failed to enable Gunicorn socket."
     exit 1
 fi
 
@@ -1900,6 +1918,17 @@ cat <<EOF | sudo tee "${docker_project_conf}" > /dev/null
 server {
     listen 80;
     server_name ${project_domain};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${project_domain};
+
+    ssl_certificate /etc/nginx/ssl/cert.crt;
+    ssl_certificate_key /etc/nginx/ssl/cert.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
 
     error_log /dev/stderr warn;
     access_log /dev/stdout;
@@ -2015,6 +2044,17 @@ cat <<EOF | sudo tee "${local_project_conf}" > /dev/null
 server {
     listen 80;
     server_name ${project_domain};
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${project_domain};
+
+    ssl_certificate /etc/nginx/ssl/cert.crt;
+    ssl_certificate_key /etc/nginx/ssl/cert.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
 
     access_log ${project_path}/log/nginx/access.log;
     error_log ${project_path}/log/nginx/error.log;
