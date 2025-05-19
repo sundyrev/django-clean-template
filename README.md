@@ -1,7 +1,5 @@
 # Django Clean Template
 
-**Important**: Before running the project, you must configure SSL and generate certificates for HTTPS support. See [Configuring HTTPS for Production](#configuring-https-for-production) for instructions on setting up SSL certificates (e.g., using Let's Encrypt or self-signed certificates).
-
 A clean and production-ready Django project template that supports both local deployment (via Systemd, Nginx, and Gunicorn with Unix sockets) and containerized deployment (via Docker with TCP ports). It includes modern tools like `uv` for dependency management and is designed to help you start development quickly.
 
 ## Table of Contents
@@ -124,6 +122,8 @@ project_directory/
     ├── staticfiles/           # Collected static files
     └── templates/             # Django templates (empty by default)
 ```
+
+**Important**: Before running the project, you must configure SSL and generate certificates for HTTPS support. See [Configuring HTTPS for Production](#configuring-https-for-production) for instructions on setting up SSL certificates (e.g., using Let's Encrypt or self-signed certificates).
 
 ## Prerequisites
 
