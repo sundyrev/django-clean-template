@@ -6,7 +6,7 @@ A clean and production-ready Django project template that supports both local de
 
 - [Features](#features)
 - [Limitations](#limitations)
-- [Project Structure](#project_structure)
+- [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [Detailed Installation](#detailed-installation)
@@ -17,6 +17,7 @@ A clean and production-ready Django project template that supports both local de
 - [Local Deployment](#local-deployment)
 - [Docker Deployment](#docker-deployment)
 - [Testing the Project](#testing-the-project)
+- [Documentation](#documentation)
 - [Why Sockets Locally and TCP in Docker?](#why-sockets-locally-and-tcp-in-docker)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -39,6 +40,7 @@ A clean and production-ready Django project template that supports both local de
 - Authentication with `django-allauth` (including MFA support)
 - Pre-configured logging with separate log files for Django, Gunicorn, and Nginx
 - Test coverage measurement with `coverage` and `.coveragerc` for precise code coverage reports
+- Dedicated `docs/` directory for comprehensive project documentation
 
 ## Limitations
 
@@ -74,6 +76,8 @@ project_directory/
 │   │       └── project_name.conf
 │   └── redis/                 # Redis configuration
 │       └── redis.conf         # Redis config file
+├── docs/                      # Project documentation
+│   └── index.md               # Main documentation index
 ├── env/                       # Python virtual environment
 ├── docker/                    # Docker-related files
 │   ├── Dockerfile.django      # Dockerfile for Django app
@@ -499,6 +503,14 @@ The project includes testing tools (`pytest`, `pytest-django`, `factory-boy`) fo
 
 See `pyproject.toml` for test configuration details.
 
+## Documentation
+
+The `docs/` directory contains comprehensive project documentation:
+
+- `index.md`: Overview and entry point for the documentation.
+
+To view or contribute to the documentation, navigate to the `docs/` directory. You can extend it by adding new Markdown files or updating existing ones. The `install.sh` script automatically creates the `docs/` directory with appropriate permissions (755 for the directory, 644 for files).
+
 ## Why Sockets Locally and TCP in Docker?
 
 - **Local (Unix Sockets)**: Faster for local setups because they communicate directly on the same machine.
@@ -518,6 +530,7 @@ This intentional split allows flexibility: local development can skip Docker bui
   coverage run <project_name>/manage.py test config.tests
   coverage report -m
   ```
+- **Documentation**: Keep the `docs/` directory updated with project-specific details, especially for APIs and custom configurations, to aid onboarding and maintenance.
 
 ## Troubleshooting
 

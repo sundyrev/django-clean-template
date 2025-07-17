@@ -112,6 +112,7 @@ cmd="sudo"
 $cmd mkdir -m 755 -p \
     "${project_path}/ssl" \
     "${project_path}/docker" \
+    "${project_path}/docs" \
     "${project_path}/log/nginx" \
     "${project_path}/conf/nginx/"{local,docker} \
     "${project_path}/conf/"{gunicorn,env_vars,redis} \
@@ -133,7 +134,8 @@ cmd="sudo"
 # Set base permissions for directories
 $cmd chmod -R 755 \
     "${project_path}/conf" \
-    "${project_path}/ssl"
+    "${project_path}/ssl" \
+    "${project_path}/docs"
 $cmd chmod -R 775 \
     "${project_path}/log" \
     "${project_path}/${project_name}/media"
@@ -152,6 +154,7 @@ fi
 # Set specific permissions for files
 $cmd find "${project_path}/conf" -type f -exec chmod 644 {} \;
 $cmd find "${project_path}/ssl" -type f -exec chmod 600 {} \;
+$cmd find "${project_path}/docs" -type f -exec chmod 644 {} \;
 
 # Handle environment-specific file permissions
 if [ "$environment" = "local" ]; then
